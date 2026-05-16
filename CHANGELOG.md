@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-16
+
+### Final review closure + verification
+
+- All 8 issues from the post-refactor review addressed (2 bugs + 2 suggestions + 4 nits).
+  - Fixed reasoning-model timeout heuristic (`grok-4.3*` / `grok-build` now correctly get 1h timeout).
+  - Removed dead `generatePKCE` / `base64urlEncode` code left from old browser PKCE flow.
+  - Extracted small typed `callXaiResponses` helper (eliminated duplication and `as any` casts).
+  - Cleaned up stale test names, headers, and comments.
+  - Zero-config `oxlint` now reports 0 warnings (`catch {}` style).
+- One final nit in review artifacts resolved (self-referential "Status: open" phrasing).
+- Full verification passes with the modern stack:
+  - `oxfmt --check` (defaults only)
+  - `tsgo --noEmit` (sole type checker)
+  - `oxlint` (zero-config, 0 warnings/0 errors)
+  - `vitest` (9/9 hermetic OAuth tests)
+- Package is now in its final polished state after the complete issue #1 refactor.
+
 ## [0.4.0] - 2026-05-16
 
 ### Massive simplification (target: clean `grok-build` provider for Coding Plan users)
