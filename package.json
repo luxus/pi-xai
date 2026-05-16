@@ -1,6 +1,6 @@
 {
   "name": "pi-xai",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pi extension for xAI text generation via Responses API — reasoning, multi-agent, structured outputs, tools",
   "keywords": [
     "coding-plan",

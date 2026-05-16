@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-16
+
+### Massive simplification (target: clean `grok-build` provider for Coding Plan users)
+
+- **Exactly 4 source `.ts` files**: `index.ts`, `xai-oauth.ts`, `xai-provider.ts`, `xai-config.ts`.
+- Deleted 3 low-value tools (`xai_web_search`, `xai_code_execution`, `xai_collections_search`).
+- Deleted `xai-client.ts`, `xai-text.ts`, `xai-text-shared.ts` (Responses logic inlined into the 2 remaining tools).
+- `xai-config.ts` reduced to tiny essentials (baseUrl + agentic settings only; credential logic moved to `xai-oauth`).
+- `xai-oauth.ts` kept in full (device code, JWT exp+skew refresh lock, grok CLI import choice, `getEffectiveXaiApiKey`, `autoImport`).
+- Agentic hook (`before_provider_request` for `grok-*`) and exactly 2 tools (`xai_generate_text`, `xai_multi_agent`) preserved.
+- Duplicated summary helpers extracted to single `formatResponseSummary`.
+- All long historical comments removed; provider and index slimmed.
+
+### New dev tooling (zero-config, 10-50x faster pre-commit)
+
+- `oxlint` (zero-config) + `oxfmt` (completely default, no config file) + `tsgo` (`@typescript/native-preview`) as the _sole_ type checker.
+- `npm run check` / `typecheck` = `tsgo --noEmit` (no `tsc --noEmit` left anywhere).
+- `npm run lint` / `lint:fix`, `npm run format` / `format:check`.
+- `lint-staged` + husky pre-commit: `["oxfmt --write", "oxlint", "tsgo --noEmit"]`.
+- `husky` + `prepare` script properly integrated (modern hook, no deprecated lines).
+- All commits leave the repo in green state (`npm run check && npm test`).
+
+### Documentation & tests
+
+- README reduced to ~1/3 length, focused only on the 2 tools + provider + agentic + OAuth.
+- Tests pruned from 19 to 9 essential OAuth/JWT/refresh/getEffective cases (still 100% hermetic coverage of what the tools depend on).
+- Version bumped to 0.4.0; CHANGELOG updated.
+
+The package is now the smallest possible custom `grok-build` provider while preserving the full sophisticated OAuth and the "magic" agentic experience users love.
+
 ## [0.3.0] - 2026-05-16
 
 ### Changed (fast release scope)

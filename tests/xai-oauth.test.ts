@@ -32,12 +32,16 @@ let TEST_PI_PATH: string;
 function makeFakeJwt(expSeconds: number): string {
   const header = { alg: "none", typ: "JWT" };
   const payload = { exp: expSeconds, sub: "test" };
-  const b64 = (o: any) => btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const b64 = (o: any) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return `${b64(header)}.${b64(payload)}.sig`;
 }
 
 function setupHermeticPaths() {
-  TEST_TMP_DIR = path.join(os.tmpdir(), `pi-xai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  TEST_TMP_DIR = path.join(
+    os.tmpdir(),
+    `pi-xai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   TEST_GROK_PATH = path.join(TEST_TMP_DIR, ".grok", "auth.json");
   TEST_PI_PATH = path.join(TEST_TMP_DIR, ".pi", "agent", "auth.json");
   fs.mkdirSync(path.dirname(TEST_GROK_PATH), { recursive: true });
@@ -83,9 +87,16 @@ describe("xai-oauth (essential 10 tests — Hermes parity)", () => {
 
   test("readGrokCliAuth parses hermetic ~/.grok/auth.json", () => {
     const key = `https://auth.x.ai::${XAI_OAUTH_CLIENT_ID}`;
-    fs.writeFileSync(TEST_GROK_PATH, JSON.stringify({ [key]: { key: "tok_123", email: "test@x.ai" } }));
+    fs.writeFileSync(
+      TEST_GROK_PATH,
+      JSON.stringify({ [key]: { key: "tok_123", email: "test@x.ai" } }),
+    );
     const r = readGrokCliAuth();
-    expect(r).toEqual({ accessToken: "tok_123", email: "test@x.ai", source: `grok-cli:${TEST_GROK_PATH}` });
+    expect(r).toEqual({
+      accessToken: "tok_123",
+      email: "test@x.ai",
+      source: `grok-cli:${TEST_GROK_PATH}`,
+    });
   });
 
   test("isXaiAccessTokenExpiring false for invalid tokens", () => {
@@ -108,11 +119,15 @@ describe("xai-oauth (essential 10 tests — Hermes parity)", () => {
 
   test("refreshXaiToken surfaces reloginRequired for imported (no refresh) tokens", async () => {
     const cred = { access: "a", refresh: "", expires: 0, source: "grok-cli-import" } as any;
-    await expect(refreshXaiToken(cred)).rejects.toThrow(/imported from the grok CLI and has no refresh token/);
+    await expect(refreshXaiToken(cred)).rejects.toThrow(
+      /imported from the grok CLI and has no refresh token/,
+    );
   });
 
   test("getEffectiveXaiApiKey prefers explicit grok-build entry", async () => {
-    const piAuth = { "grok-build": { type: "oauth", access: "tok_grok", expires: Date.now() + 3600_000 } };
+    const piAuth = {
+      "grok-build": { type: "oauth", access: "tok_grok", expires: Date.now() + 3600_000 },
+    };
     fs.writeFileSync(TEST_PI_PATH, JSON.stringify(piAuth));
     const r = await getEffectiveXaiApiKey();
     expect(r?.apiKey).toBe("tok_grok");
