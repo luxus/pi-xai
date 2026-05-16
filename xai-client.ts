@@ -64,7 +64,15 @@ export class XaiClient {
       log?.error?.(
         `[xai-client] request failed ${response.status} ${url}: ${errorText.slice(0, 500)}`,
       );
-      throw new Error(`xAI API error: ${response.status} ${errorText.slice(0, 500)}`);
+      const err = new Error(`xAI API error: ${response.status} ${errorText.slice(0, 500)}`);
+      // Reactive 401 handling hook (matching Hermes: on 401 from Responses, caller/upper layer can refresh token + retry).
+      // For grok-build oauth entries, the stored token in Pi auth + getEffectiveXaiApiKey (with JWT expiry)
+      // + framework oauth refresh for provider calls provide the reactive path. Tools re-resolve on each execute.
+      if (response.status === 401) {
+        (err as any).status = 401;
+        (err as any).reloginRequired = true;
+      }
+      throw err;
     }
     return (await response.json()) as T;
   }

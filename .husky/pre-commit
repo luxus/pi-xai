@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Run via npm (lint-staged configured to typecheck + test on staged *.ts files)
+npx lint-staged

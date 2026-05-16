@@ -141,7 +141,9 @@ export async function generateMultiAgentWithXai(
     model: options.model || "grok-4.20-multi-agent",
     input: options.input,
   };
-  if (options.reasoningEffort) {
+  // grok-build is a special Coding Plan alias that does not accept the reasoning.effort parameter
+  // (it internally uses maximum reasoning). Only send it for explicit model names.
+  if (options.reasoningEffort && options.model !== "grok-build") {
     body.reasoning = { effort: options.reasoningEffort };
   }
   if (options.previousResponseId) body.previous_response_id = options.previousResponseId;

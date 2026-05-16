@@ -11,9 +11,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "rootDir": ".",
-    "types": ["bun"],
     "lib": ["ESNext", "DOM"]
   },
-  "include": ["*.ts"],
+  "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist", ".pi"]
 }

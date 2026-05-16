@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
-# bun.lock   # keep the lockfile for reproducible installs
+# Note: package-lock.json is committed for reproducible npm installs (standard for npm packages)
 
 # Pi runtime data
 .pi/

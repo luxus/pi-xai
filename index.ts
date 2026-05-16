@@ -140,7 +140,8 @@ export default async function (api: ExtensionAPI) {
   // authenticate is the native `/login grok-build` OAuth flow (no binary needed).
   await autoImportGrokCliIfNeeded();
 
-  // Override built-in xAI provider with Responses API support + Grok Build OAuth
+  // Register xAI (Grok Build) provider (subscription OAuth + Responses API)
+  // The powerful xAI tools below work with both grok-build OAuth and regular XAI_API_KEY.
   registerXaiProvider(api);
 
   // Agentic mode: automatically inject xAI built-in tools into provider requests
@@ -168,7 +169,7 @@ export default async function (api: ExtensionAPI) {
         "Generate text via xAI Responses API. Supports reasoning models, structured output, built-in tools (web_search, x_search, code_execution), stateful conversations via previous_response_id, and encrypted reasoning content.",
       parameters: Type.Object({
         prompt: Type.String({ description: "User prompt / message" }),
-        model: Type.Optional(Type.String({ description: "Model override (default: grok-4, reasoning: grok-4.20-reasoning)" })),
+        model: Type.Optional(Type.String({ description: "Model override (default: grok-4 via XAI_API_KEY fallback; grok-4.3 / grok-build recommended with /login grok-build)" })),
         system: Type.Optional(Type.String({ description: "System/developer instruction" })),
         previousResponseId: Type.Optional(
           Type.String({ description: "Previous response ID for conversation continuity" }),
@@ -229,7 +230,7 @@ export default async function (api: ExtensionAPI) {
       name: "xai_multi_agent",
       label: "xAI Multi-Agent Research",
       description:
-        "Deep research via xAI grok-4.20-multi-agent. Orchestrates 4 or 16 agents with built-in tools (web_search, x_search). Use reasoningEffort high/xhigh for 16 agents, low/medium for 4 agents.",
+        "Deep research via xAI Coding Plan models (grok-build / grok-4.3). Orchestrates multiple agents with built-in tools (web_search, x_search). Note: the special 'grok-build' model does not accept explicit reasoningEffort (it uses maximum reasoning internally).",
       parameters: Type.Object({
         prompt: Type.String({ description: "Research query / question" }),
         reasoningEffort: Type.Optional(Type.Union([

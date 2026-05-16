@@ -1,8 +1,12 @@
 {
-  "name": "pi-xai-text",
-  "version": "0.2.0",
+  "name": "pi-xai",
+  "version": "0.3.0",
   "description": "Pi extension for xAI text generation via Responses API — reasoning, multi-agent, structured outputs, tools",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luxus/pi-xai.git"
+  },
   "type": "module",
   "keywords": [
     "pi-package",
@@ -11,10 +15,16 @@
     "responses-api",
     "multi-agent"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "echo 'nothing to build'",
-    "typecheck": "bunx tsc --noEmit",
-    "check": "bun run typecheck"
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "husky"
   },
   "pi": {
     "extensions": [
@@ -26,12 +36,23 @@
   },
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "^0.69.0",
-    "@types/bun": "^1.1.0",
-    "typescript": "^5.7.0"
+    "husky": "^9.1.7",
+    "lint-staged": "^15.4.3",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
   },
   "files": [
-    "*.ts",
+    "index.ts",
+    "xai-*.ts",
     "tsconfig.json",
-    "README.md"
-  ]
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "lint-staged": {
+    "**/*.ts": [
+      "tsc --noEmit",
+      "vitest run"
+    ]
+  }
 }
