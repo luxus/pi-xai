@@ -1,56 +1,40 @@
 # pi-xai
 
-Pi extension for xAI (Grok Build) via the modern Responses API — subscription OAuth, reasoning, multi-agent research, and powerful built-in tools.
+Pi extension for xAI Grok Build (Coding Plan) — Responses API, native OAuth, 2 powerful tools + automatic agentic mode.
 
 ## Features
 
-- **xAI (Grok Build) Provider** — Dedicated `grok-build` provider for xAI Coding Plan subscribers. Uses Responses API (`openai-responses`) for native tool calling and full reasoning. Run `/login grok-build` to activate. The built-in `xai` provider in Pi handles regular API key users.
-- **Responses API** (`xai_generate_text`) — Stateful conversations, reasoning models, structured outputs, built-in tools, server-side storage.
-- **Multi-Agent Research** (`xai_multi_agent`) — Deep research with `grok-4.20-multi-agent`. 4 or 16 collaborating agents with web search, X search, code execution. Shows progress updates during research.
+- **grok-build provider** — `/login grok-build` (native OAuth, no binary), Responses API (`openai-responses`), full reasoning
+- `xai_generate_text` — stateful conversations, structured JSON output, built-in tools, `previousResponseId`, custom timeout
+- `xai_multi_agent` — 4/16-agent research (`reasoningEffort`), live progress updates via `onUpdate`
+- **Agentic mode** — when any `grok-*` model is active, the extension auto-injects web_search / x_search / code_execution; the model decides what to call (the "magic")
+- Full OAuth implementation: device code flow, JWT expiry + refresh lock, optional import from `~/.grok/auth.json`
 
-## Provider Models (via grok-build)
+Models (via `/model grok-build/...`): `grok-build` (primary Coding Plan alias), `grok-4.3`, `grok-4.3-latest`.
 
-After `/login grok-build`, these models are available via `/model grok-build/...`:
+Everything works with Grok Build OAuth or plain `XAI_API_KEY`.
 
-| Model             | Type                  | Context | Max Tokens |
-| ----------------- | --------------------- | ------- | ---------- |
-| `grok-build`      | Primary (Coding Plan) | 131K    | 32K        |
-| `grok-4.3`        | Build                 | 131K    | 32K        |
-| `grok-4.3-latest` | Build Latest          | 131K    | 32K        |
+## Quick start
 
-(The full Grok model range including fast/mini variants is available via Pi's built-in `xai` provider + `XAI_API_KEY`.)
+```bash
+pi install npm:pi-xai
+# then in Pi:
+/login grok-build
+/model grok-build/grok-build
+```
 
-The `xai_multi_agent` tool uses the specialized `grok-4.20-multi-agent` backend model (4–16 agents) and is available to all authenticated users (via grok-build OAuth or XAI_API_KEY fallback) regardless of the active `/model` selection.
+Ask anything. Agentic mode handles research for you, or call the two explicit tools for precise control.
 
 ## Tools
 
-| Tool                     | Description                                                                                                                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `xai_generate_text`      | Generate text via Responses API. Supports reasoning models (e.g. `grok-4.3`), structured JSON output, built-in tools (`web_search`, `x_search`, `code_execution`), `previousResponseId`, `store`, `include`, custom timeout. Returns citations when tools are used. |
-| `xai_multi_agent`        | Deep research via xAI Coding Plan models (grok-build / grok-4.3). `reasoningEffort` controls agent count (low/medium=4, high/xhigh=16). Shows live progress updates. Supports built-in tools and multi-turn via `previousResponseId`. Returns citations.            |
-| `xai_web_search`         | Web search via xAI's built-in `web_search` tool. Returns results with citations. Works with any pi model.                                                                                                                                                           |
-| `xai_code_execution`     | Execute Python code in xAI's sandbox via `code_execution` tool. Returns output and generated files. Works with any pi model.                                                                                                                                        |
-| `xai_collections_search` | Query uploaded document collections via `collections_search` tool. Works with any pi model.                                                                                                                                                                         |
+| Tool                | Description                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| `xai_generate_text` | Responses API text gen with reasoning, JSON schema, tools, state |
+| `xai_multi_agent`   | Deep research (4 or 16 agents), progress, multi-turn             |
 
-## Agentic Mode
+## Agentic mode config (optional)
 
-When an xAI model (e.g. `grok-build` or `grok-4.3`) is active via `/model grok-build/...`, built-in tools are **automatically injected** into every request (the `before_provider_request` hook matches any `grok-*` model). The model decides autonomously when to search the web, browse X, or execute code — just like native xAI agentic behavior.
-
-**Enabled by default.** All built-in tools: `web_search`, `x_search`, `code_execution`, `collections_search`.
-
-### Disable Agentic Mode
-
-```json
-{
-  "xai": {
-    "text": {
-      "agentic": false
-    }
-  }
-}
-```
-
-### Select Specific Tools Only
+`~/.pi/agent/settings.json` (or `.pi/settings.json`):
 
 ```json
 {
@@ -63,96 +47,20 @@ When an xAI model (e.g. `grok-build` or `grok-4.3`) is active via `/model grok-b
 }
 ```
 
-Available tools: `web_search`, `x_search`, `code_execution`, `collections_search`.
-
-### How It Works
-
-- Select a Grok Build model via `/model grok-build/grok-build` (or `grok-4.3`)
-- Ask anything — "What are the latest updates from xAI?"
-- The model autonomously decides to use `web_search`, gets results, cites sources
-- Citations appear inline (`[[1]](url)`) and in the Sources footer
-- No explicit tool calls needed — the model orchestrates itself (agentic mode works for all grok-\* models from the grok-build provider)
-
-## xAI (Grok Build) Provider
-
-This extension provides the dedicated **`grok-build`** provider for xAI Coding Plan / Grok Build subscribers.
-
-**Recommended: `/login grok-build`**
-
-- Uses the same official xAI OAuth client as the Grok apps (native device code flow).
-- Smart import: if you have an existing `grok login` from the official CLI, it offers to import it.
-- No external binary required.
-- Appears first-class under Pi Subscriptions.
-
-After login, use models via:
-
-```
-/model grok-build/grok-build
-/model grok-build/grok-4.3
-/model grok-build/grok-4.3-latest
-```
-
-The generic `xai` provider (full model list including fast/mini) is provided by Pi itself — use your normal `XAI_API_KEY` with the built-in `xai` provider.
-
-**Credential resolution (prefers Grok Build when available):**
-
-1. `grok-build` OAuth entry (from `/login grok-build`)
-2. Auto-imported from `~/.grok/auth.json` (official CLI login)
-3. `xai` entry or `XAI_API_KEY` / settings (for the built-in xai provider + our tools)
-
-The powerful tools (`xai_generate_text`, `xai_multi_agent`, etc.) work seamlessly with whichever credential is active.
-
-### Manual configuration
-
-Set API key via environment or Pi settings:
-
-```json
-{
-  "xai": {
-    "apiKey": "xai-...",
-    "baseUrl": "https://api.x.ai/v1"
-  }
-}
-```
-
-## Install
-
-```bash
-pi install npm:pi-xai
-```
-
-After install, run `/login grok-build`, then select a model with `/model grok-build/grok-build` (or `grok-4.3`). The `xai_generate_text` and `xai_multi_agent` tools are also available for deep xAI usage.
+Default = enabled with all three built-in tools.
 
 ## Development
 
-All development uses standard npm (no Bun required in your PATH):
+Zero-config modern stack (oxfmt default, oxlint zero-config, tsgo only):
 
-- Install deps: `npm install`
-- Typecheck: `npm run check` (or `npx tsc --noEmit`)
-- Tests: `npm test` (or `npx vitest run`) — 19+ unit tests covering JWT expiry, refresh hardening, credential resolution, XaiAuthError paths.
-- Pre-commit: husky + lint-staged automatically run `tsc --noEmit && vitest run` on staged `**/*.ts` changes after `npm install`.
+```bash
+npm install
+npm run check      # tsgo --noEmit
+npm run lint       # oxlint .
+npm run format     # oxfmt --write .
+npm test
+```
 
-The project ships raw TypeScript (with explicit `.ts` imports like `import { X } from "./foo.ts"`). This works because:
+Husky + lint-staged runs `oxfmt --write`, `oxlint`, `tsgo --noEmit` on every commit.
 
-- Local dev: Vitest + Vite resolver + tsconfig `moduleResolution: "bundler"` + `allowImportingTsExtensions`.
-- Runtime (when installed via `pi`): The `pi` tool uses Bun, which natively supports these imports for extensions.
-
-**Note:** Bun is still the runtime for the `pi` CLI and extension host. This migration makes _development and publishing_ 100% npm-native while preserving full compatibility with Pi.
-
-## Publishing (manual npm release)
-
-This package is published to npm for consumption via `pi install npm:pi-xai`.
-
-1. Update version in `package.json` (or use `npm version patch|minor|major`).
-2. Update `CHANGELOG.md` with the new version entry.
-3. Commit the changes.
-4. Run verification: `npm run check && npm test && npm pack --dry-run`.
-5. `npm publish` (or `npm publish --dry-run` to inspect the tarball contents).
-
-The published tarball contains only the necessary files (`index.ts`, `xai-*.ts`, `tsconfig.json`, `README.md`, `CHANGELOG.md`, `LICENSE`) thanks to the `files` field — no tests, no example providers, no dev configs.
-
-The `pi` field in package.json tells the Pi extension loader which file to load.
-
-## Implementation notes
-
-The implementation was double-checked against the referenced Hermes Agent xAI OAuth commit (PKCE/device, JWT exp+skew, typed errors, auxiliary routing equivalent via effective key, refresh rotation, 401 signaling). Fixes applied for error guards, JWT-based expiry in resolution, auto-import bug, and reactive 401 flag.
+Exactly 4 source files. See CHANGELOG.md.
