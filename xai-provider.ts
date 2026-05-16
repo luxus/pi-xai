@@ -9,25 +9,8 @@ import {
 export function registerXaiProvider(api: ExtensionAPI) {
   const config = resolveXaiConfig();
 
-  // ========================================================================
-  // xAI (Grok Build) provider — primary (and only) provider from this extension
-  // ========================================================================
-  // This extension now focuses exclusively on the dedicated "grok-build" provider
-  // for xAI Coding Plan / Grok Build subscribers.
-  //
-  // - Uses the modern Responses API (`api: "openai-responses"`) for excellent
-  //   native tool calling, reasoning, and multi-agent support.
-  // - Authenticates via native OAuth — run `/login grok-build` (no CLI binary needed).
-  // - The generic "xai" provider is intentionally NOT registered here (Pi already
-  //   ships a built-in xai provider for regular API key users).
-  //
-  // Model list kept in sync with Hermes Agent PR #25941.
-  // "grok-build" is the primary alias for Coding Plan users (max reasoning internally).
-  //
-  // Usage:
-  //   /login grok-build
-  //   /model grok-build/grok-build
-  // ========================================================================
+  // xAI (Grok Build) provider for Coding Plan users — Responses API + native OAuth.
+  // Models kept in sync with official Coding Plan (no fast/mini variants).
   api.registerProvider("grok-build", {
     baseUrl: config.xai.baseUrl,
     api: "openai-responses",
