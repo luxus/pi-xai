@@ -39,12 +39,16 @@ let TEST_PI_PATH: string;
 function makeFakeJwt(expSeconds: number): string {
   const header = { alg: "none", typ: "JWT" };
   const payload = { exp: expSeconds, sub: "test" };
-  const b64 = (o: any) => btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const b64 = (o: any) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return `${b64(header)}.${b64(payload)}.sig`;
 }
 
 function setupHermeticPaths() {
-  TEST_TMP_DIR = path.join(os.tmpdir(), `pi-xai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  TEST_TMP_DIR = path.join(
+    os.tmpdir(),
+    `pi-xai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   TEST_GROK_PATH = path.join(TEST_TMP_DIR, ".grok", "auth.json");
   TEST_PI_PATH = path.join(TEST_TMP_DIR, ".pi", "agent", "auth.json");
   fs.mkdirSync(path.dirname(TEST_GROK_PATH), { recursive: true });
@@ -91,9 +95,16 @@ describe("xai-oauth (Hermes parity hardening + Pi grok-build)", () => {
 
   test("readGrokCliAuth parses controlled temp ~/.grok/auth.json (hermetic)", () => {
     const key = `https://auth.x.ai::${XAI_OAUTH_CLIENT_ID}`;
-    fs.writeFileSync(TEST_GROK_PATH, JSON.stringify({ [key]: { key: "tok_hermetic_123", email: "test@x.ai" } }));
+    fs.writeFileSync(
+      TEST_GROK_PATH,
+      JSON.stringify({ [key]: { key: "tok_hermetic_123", email: "test@x.ai" } }),
+    );
     const r = readGrokCliAuth();
-    expect(r).toEqual({ accessToken: "tok_hermetic_123", email: "test@x.ai", source: `grok-cli:${TEST_GROK_PATH}` });
+    expect(r).toEqual({
+      accessToken: "tok_hermetic_123",
+      email: "test@x.ai",
+      source: `grok-cli:${TEST_GROK_PATH}`,
+    });
   });
 
   // --- JWT exp (core of Hermes reference) ---
@@ -128,7 +139,12 @@ describe("xai-oauth (Hermes parity hardening + Pi grok-build)", () => {
 
   test("refreshXaiToken surfaces reloginRequired error for imported (no refresh) tokens", async () => {
     await expect(
-      refreshXaiToken({ access: "a", refresh: "", expires: Date.now() + 10000, source: "grok-cli-import" } as any),
+      refreshXaiToken({
+        access: "a",
+        refresh: "",
+        expires: Date.now() + 10000,
+        source: "grok-cli-import",
+      } as any),
     ).rejects.toThrow(/imported from the grok CLI and has no refresh token/);
   });
 
@@ -157,16 +173,22 @@ describe("xai-oauth (Hermes parity hardening + Pi grok-build)", () => {
 
   // --- getEffectiveXaiApiKey priority (5 levels) ---
   test("getEffectiveXaiApiKey prefers explicit grok-build entry written to hermetic temp PI_AUTH_PATH", async () => {
-    fs.writeFileSync(TEST_PI_PATH, JSON.stringify({
-      "grok-build": { type: "oauth", access: "gb_hermetic", expires: Date.now() + 3600000 },
-    }));
+    fs.writeFileSync(
+      TEST_PI_PATH,
+      JSON.stringify({
+        "grok-build": { type: "oauth", access: "gb_hermetic", expires: Date.now() + 3600000 },
+      }),
+    );
     const r = await getEffectiveXaiApiKey({ env: "env_should_not_win" });
     expect(r?.apiKey).toBe("gb_hermetic");
     expect(r?.source).toContain("grok-build");
   });
 
   test("getEffectiveXaiApiKey falls to settings when no pi/grok files (hermetic empty temps)", async () => {
-    const r = await getEffectiveXaiApiKey({ settingsApiKey: "set_key_hermetic", settingsSource: "project:bar" });
+    const r = await getEffectiveXaiApiKey({
+      settingsApiKey: "set_key_hermetic",
+      settingsSource: "project:bar",
+    });
     // In hermetic empty temps + no env, settings is used
     expect(r?.apiKey).toBe("set_key_hermetic");
   });
@@ -196,7 +218,11 @@ describe("xai-oauth (Hermes parity hardening + Pi grok-build)", () => {
   });
 
   test("refreshXaiToken throws original error when not relogin case (e.g. network)", async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => "server err" } as any);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => "server err",
+    } as any);
     const cred = { access: "a", refresh: "r", expires: 0, source: "x" } as any;
     await expect(refreshXaiToken(cred)).rejects.toThrow(/xAI token refresh failed/);
   });

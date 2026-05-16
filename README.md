@@ -12,11 +12,11 @@ Pi extension for xAI (Grok Build) via the modern Responses API — subscription 
 
 After `/login grok-build`, these models are available via `/model grok-build/...`:
 
-| Model | Type | Context | Max Tokens |
-|-------|------|---------|-----------|
-| `grok-build` | Primary (Coding Plan) | 131K | 32K |
-| `grok-4.3` | Build | 131K | 32K |
-| `grok-4.3-latest` | Build Latest | 131K | 32K |
+| Model             | Type                  | Context | Max Tokens |
+| ----------------- | --------------------- | ------- | ---------- |
+| `grok-build`      | Primary (Coding Plan) | 131K    | 32K        |
+| `grok-4.3`        | Build                 | 131K    | 32K        |
+| `grok-4.3-latest` | Build Latest          | 131K    | 32K        |
 
 (The full Grok model range including fast/mini variants is available via Pi's built-in `xai` provider + `XAI_API_KEY`.)
 
@@ -24,13 +24,13 @@ The `xai_multi_agent` tool uses the specialized `grok-4.20-multi-agent` backend 
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `xai_generate_text` | Generate text via Responses API. Supports reasoning models (e.g. `grok-4.3`), structured JSON output, built-in tools (`web_search`, `x_search`, `code_execution`), `previousResponseId`, `store`, `include`, custom timeout. Returns citations when tools are used. |
-| `xai_multi_agent` | Deep research via xAI Coding Plan models (grok-build / grok-4.3). `reasoningEffort` controls agent count (low/medium=4, high/xhigh=16). Shows live progress updates. Supports built-in tools and multi-turn via `previousResponseId`. Returns citations. |
-| `xai_web_search` | Web search via xAI's built-in `web_search` tool. Returns results with citations. Works with any pi model. |
-| `xai_code_execution` | Execute Python code in xAI's sandbox via `code_execution` tool. Returns output and generated files. Works with any pi model. |
-| `xai_collections_search` | Query uploaded document collections via `collections_search` tool. Works with any pi model. |
+| Tool                     | Description                                                                                                                                                                                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `xai_generate_text`      | Generate text via Responses API. Supports reasoning models (e.g. `grok-4.3`), structured JSON output, built-in tools (`web_search`, `x_search`, `code_execution`), `previousResponseId`, `store`, `include`, custom timeout. Returns citations when tools are used. |
+| `xai_multi_agent`        | Deep research via xAI Coding Plan models (grok-build / grok-4.3). `reasoningEffort` controls agent count (low/medium=4, high/xhigh=16). Shows live progress updates. Supports built-in tools and multi-turn via `previousResponseId`. Returns citations.            |
+| `xai_web_search`         | Web search via xAI's built-in `web_search` tool. Returns results with citations. Works with any pi model.                                                                                                                                                           |
+| `xai_code_execution`     | Execute Python code in xAI's sandbox via `code_execution` tool. Returns output and generated files. Works with any pi model.                                                                                                                                        |
+| `xai_collections_search` | Query uploaded document collections via `collections_search` tool. Works with any pi model.                                                                                                                                                                         |
 
 ## Agentic Mode
 
@@ -71,7 +71,7 @@ Available tools: `web_search`, `x_search`, `code_execution`, `collections_search
 - Ask anything — "What are the latest updates from xAI?"
 - The model autonomously decides to use `web_search`, gets results, cites sources
 - Citations appear inline (`[[1]](url)`) and in the Sources footer
-- No explicit tool calls needed — the model orchestrates itself (agentic mode works for all grok-* models from the grok-build provider)
+- No explicit tool calls needed — the model orchestrates itself (agentic mode works for all grok-\* models from the grok-build provider)
 
 ## xAI (Grok Build) Provider
 
@@ -95,6 +95,7 @@ After login, use models via:
 The generic `xai` provider (full model list including fast/mini) is provided by Pi itself — use your normal `XAI_API_KEY` with the built-in `xai` provider.
 
 **Credential resolution (prefers Grok Build when available):**
+
 1. `grok-build` OAuth entry (from `/login grok-build`)
 2. Auto-imported from `~/.grok/auth.json` (official CLI login)
 3. `xai` entry or `XAI_API_KEY` / settings (for the built-in xai provider + our tools)
@@ -136,7 +137,7 @@ The project ships raw TypeScript (with explicit `.ts` imports like `import { X }
 - Local dev: Vitest + Vite resolver + tsconfig `moduleResolution: "bundler"` + `allowImportingTsExtensions`.
 - Runtime (when installed via `pi`): The `pi` tool uses Bun, which natively supports these imports for extensions.
 
-**Note:** Bun is still the runtime for the `pi` CLI and extension host. This migration makes *development and publishing* 100% npm-native while preserving full compatibility with Pi.
+**Note:** Bun is still the runtime for the `pi` CLI and extension host. This migration makes _development and publishing_ 100% npm-native while preserving full compatibility with Pi.
 
 ## Publishing (manual npm release)
 

@@ -2,44 +2,19 @@
   "name": "pi-xai",
   "version": "0.3.0",
   "description": "Pi extension for xAI text generation via Responses API — reasoning, multi-agent, structured outputs, tools",
+  "keywords": [
+    "coding-plan",
+    "grok",
+    "grok-build",
+    "multi-agent",
+    "pi-package",
+    "responses-api",
+    "xai"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/luxus/pi-xai.git"
-  },
-  "type": "module",
-  "keywords": [
-    "pi-package",
-    "xai",
-    "grok",
-    "responses-api",
-    "multi-agent"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
-  "scripts": {
-    "build": "echo 'nothing to build'",
-    "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "prepare": "husky"
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
-  "dependencies": {
-    "typebox": "^1.1.24"
-  },
-  "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.69.0",
-    "husky": "^9.1.7",
-    "lint-staged": "^15.4.3",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.8"
   },
   "files": [
     "index.ts",
@@ -49,10 +24,45 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
+  "type": "module",
+  "scripts": {
+    "build": "echo 'nothing to build'",
+    "check": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "typebox": "^1.1.24"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.69.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260516.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.4.3",
+    "oxfmt": "^0.50.0",
+    "oxlint": "^1.65.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  },
   "lint-staged": {
     "**/*.ts": [
-      "tsc --noEmit",
-      "vitest run"
+      "oxfmt --write",
+      "oxlint",
+      "tsgo --noEmit"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
     ]
   }
 }

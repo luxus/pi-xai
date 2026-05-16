@@ -29,8 +29,7 @@ export const XAI_OAUTH_ISSUER = "https://auth.x.ai";
 export const XAI_OAUTH_DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code";
 export const XAI_OAUTH_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 export const XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
-export const XAI_OAUTH_SCOPE =
-  "openid profile email offline_access grok-cli:access api:access";
+export const XAI_OAUTH_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 export const XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 300; // 5 min
 
 export let GROK_CLI_AUTH_PATH = resolve(homedir(), ".grok", "auth.json");
@@ -44,10 +43,7 @@ export class XaiAuthError extends Error {
   reloginRequired: boolean;
   code?: string;
 
-  constructor(
-    message: string,
-    options: { reloginRequired?: boolean; code?: string } = {},
-  ) {
+  constructor(message: string, options: { reloginRequired?: boolean; code?: string } = {}) {
     super(message);
     this.name = "XaiAuthError";
     this.reloginRequired = !!options.reloginRequired;
@@ -168,20 +164,20 @@ async function refreshXaiAccessToken(refreshToken: string): Promise<{
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new XaiAuthError(
-      `xAI token refresh failed (${res.status}): ${text}`,
-      { reloginRequired: res.status === 400 || res.status === 401, code: "xai_refresh_failed" },
-    );
+    throw new XaiAuthError(`xAI token refresh failed (${res.status}): ${text}`, {
+      reloginRequired: res.status === 400 || res.status === 401,
+      code: "xai_refresh_failed",
+    });
   }
 
   let data: any;
   try {
     data = await res.json();
   } catch (e) {
-    throw new XaiAuthError(
-      `xAI token refresh returned invalid JSON: ${e}`,
-      { reloginRequired: true, code: "xai_refresh_invalid_json" },
-    );
+    throw new XaiAuthError(`xAI token refresh returned invalid JSON: ${e}`, {
+      reloginRequired: true,
+      code: "xai_refresh_invalid_json",
+    });
   }
   if (!data || typeof data !== "object" || !data.access_token) {
     throw new XaiAuthError(
@@ -196,7 +192,9 @@ async function refreshXaiAccessToken(refreshToken: string): Promise<{
 // Grok CLI reader (optional convenience — auto-detect if you already ran `grok login` elsewhere)
 // =============================================================================
 
-export function readGrokCliAuth(): { accessToken: string; email?: string; source: string } | undefined {
+export function readGrokCliAuth():
+  | { accessToken: string; email?: string; source: string }
+  | undefined {
   if (!existsSync(GROK_CLI_AUTH_PATH)) return undefined;
 
   try {
@@ -281,19 +279,19 @@ async function requestDeviceCode(): Promise<DeviceCodeResponse> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new XaiAuthError(
-      `xAI device code request failed (${res.status}): ${text}`,
-      { reloginRequired: true, code: "xai_device_code_failed" },
-    );
+    throw new XaiAuthError(`xAI device code request failed (${res.status}): ${text}`, {
+      reloginRequired: true,
+      code: "xai_device_code_failed",
+    });
   }
 
   try {
     return (await res.json()) as DeviceCodeResponse;
   } catch (e) {
-    throw new XaiAuthError(
-      `xAI device code request returned invalid JSON: ${e}`,
-      { reloginRequired: true, code: "xai_device_invalid_json" },
-    );
+    throw new XaiAuthError(`xAI device code request returned invalid JSON: ${e}`, {
+      reloginRequired: true,
+      code: "xai_device_invalid_json",
+    });
   }
 }
 
@@ -317,19 +315,19 @@ async function pollDeviceToken(deviceCode: string): Promise<{
   let data: any;
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new XaiAuthError(
-      `xAI device token exchange failed (${res.status}): ${text}`,
-      { reloginRequired: true, code: "xai_device_token_failed" },
-    );
+    throw new XaiAuthError(`xAI device token exchange failed (${res.status}): ${text}`, {
+      reloginRequired: true,
+      code: "xai_device_token_failed",
+    });
   }
 
   try {
     data = await res.json();
   } catch (e) {
-    throw new XaiAuthError(
-      `xAI device token exchange returned invalid JSON: ${e}`,
-      { reloginRequired: true, code: "xai_device_invalid_json" },
-    );
+    throw new XaiAuthError(`xAI device token exchange returned invalid JSON: ${e}`, {
+      reloginRequired: true,
+      code: "xai_device_invalid_json",
+    });
   }
 
   if (data?.access_token) {
@@ -341,13 +339,26 @@ async function pollDeviceToken(deviceCode: string): Promise<{
 
   if (error === "authorization_pending") return { access_token: "" };
   if (error === "slow_down") return { access_token: "slow_down" as any };
-  if (error === "expired_token") throw new XaiAuthError("Device code expired. Please run /login grok-build again.", { reloginRequired: true, code: "xai_device_expired" });
-  if (error === "access_denied") throw new XaiAuthError("You denied the login request.", { reloginRequired: true, code: "xai_device_denied" });
+  if (error === "expired_token")
+    throw new XaiAuthError("Device code expired. Please run /login grok-build again.", {
+      reloginRequired: true,
+      code: "xai_device_expired",
+    });
+  if (error === "access_denied")
+    throw new XaiAuthError("You denied the login request.", {
+      reloginRequired: true,
+      code: "xai_device_denied",
+    });
 
-  throw new XaiAuthError(`Device code token exchange failed: ${error} ${desc}`, { reloginRequired: true, code: "xai_device_token_failed" });
+  throw new XaiAuthError(`Device code token exchange failed: ${error} ${desc}`, {
+    reloginRequired: true,
+    code: "xai_device_token_failed",
+  });
 }
 
-async function performNativeDeviceCodeLogin(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+async function performNativeDeviceCodeLogin(
+  callbacks: OAuthLoginCallbacks,
+): Promise<OAuthCredentials> {
   callbacks.onProgress?.("Starting native xAI login (Device Code Flow)...");
 
   const device = await requestDeviceCode();
@@ -384,7 +395,8 @@ async function performNativeDeviceCodeLogin(callbacks: OAuthLoginCallbacks): Pro
         const access = result.access_token;
         const refresh = result.refresh_token ?? "";
         const expiresIn = result.expires_in ?? 3600;
-        const expires = Date.now() + expiresIn * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000;
+        const expires =
+          Date.now() + expiresIn * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000;
 
         callbacks.onProgress?.("Native login successful!");
         return { access, refresh, expires, source: "native-device-code" };
@@ -404,7 +416,10 @@ async function performNativeDeviceCodeLogin(callbacks: OAuthLoginCallbacks): Pro
 function importFromGrokCli(grokCli: { accessToken: string; email?: string }): OAuthCredentials {
   const now = Date.now();
   const payload = decodeJwtPayload(grokCli.accessToken);
-  const exp = typeof payload?.exp === "number" ? payload.exp * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000 : now + 24 * 60 * 60 * 1000;
+  const exp =
+    typeof payload?.exp === "number"
+      ? payload.exp * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000
+      : now + 24 * 60 * 60 * 1000;
   return {
     access: grokCli.accessToken,
     refresh: "", // grok CLI tokens usually cannot be refreshed via this flow
@@ -428,12 +443,14 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
 
     if (hasSelect) {
       const choice = await cb.onSelect!({
-        message: `Found existing Grok CLI login${existing.email ? ` for ${existing.email}` : ""}.\n\n` +
+        message:
+          `Found existing Grok CLI login${existing.email ? ` for ${existing.email}` : ""}.\n\n` +
           `How do you want to authenticate for Grok Build / Coding Plan?`,
         options: [
           {
             id: "import",
-            label: "Import existing `grok login` (Recommended — guaranteed to use your Coding Plan subscription)",
+            label:
+              "Import existing `grok login` (Recommended — guaranteed to use your Coding Plan subscription)",
           },
           {
             id: "native",
@@ -449,7 +466,9 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
       // else fall through to native
     } else {
       // No onSelect support — just import automatically (best effort)
-      callbacks.onProgress?.(`Found existing Grok CLI login${existing.email ? ` (${existing.email})` : ""}. Importing...`);
+      callbacks.onProgress?.(
+        `Found existing Grok CLI login${existing.email ? ` (${existing.email})` : ""}. Importing...`,
+      );
       return importFromGrokCli(existing);
     }
   }
@@ -462,7 +481,9 @@ export async function refreshXaiToken(credentials: OAuthCredentials): Promise<OA
   if (!credentials.refresh) {
     // Imported token from ~/.grok/auth.json (no refresh token was stored).
     // User should do a real /login grok-build for a managed, refreshable session.
-    throw new Error("This xAI token was imported from the grok CLI and has no refresh token. Run `/login grok-build` for a fully managed OAuth session (works without the grok binary).");
+    throw new Error(
+      "This xAI token was imported from the grok CLI and has no refresh token. Run `/login grok-build` for a fully managed OAuth session (works without the grok binary).",
+    );
   }
 
   try {
@@ -512,35 +533,48 @@ export async function getEffectiveXaiApiKey(options?: {
   // 1. Explicit "grok-build" entry in Pi auth (proper OAuth from Grok Build subscription)
   const grokBuildEntry = piAuth?.["grok-build"];
   if (grokBuildEntry) {
-    if (grokBuildEntry.type === "api_key" && typeof grokBuildEntry.key === "string" && grokBuildEntry.key.trim()) {
+    if (
+      grokBuildEntry.type === "api_key" &&
+      typeof grokBuildEntry.key === "string" &&
+      grokBuildEntry.key.trim()
+    ) {
       return { apiKey: grokBuildEntry.key.trim(), source: `pi-auth:${PI_AUTH_PATH}:grok-build` };
     }
 
     if (grokBuildEntry.type === "oauth" && grokBuildEntry.access) {
-      const storedExpired = typeof grokBuildEntry.expires === "number" && Date.now() >= grokBuildEntry.expires;
+      const storedExpired =
+        typeof grokBuildEntry.expires === "number" && Date.now() >= grokBuildEntry.expires;
       const jwtExpiring = isXaiAccessTokenExpiring(grokBuildEntry.access as string);
       if ((storedExpired || jwtExpiring) && grokBuildEntry.refresh) {
-      const refreshed = await withRefreshLock("grok-build", async () => {
-        const r = await refreshXaiToken({
-          access: grokBuildEntry.access!,
-          refresh: grokBuildEntry.refresh as string,
-          expires: grokBuildEntry.expires as number,
+        const refreshed = await withRefreshLock("grok-build", async () => {
+          const r = await refreshXaiToken({
+            access: grokBuildEntry.access!,
+            refresh: grokBuildEntry.refresh as string,
+            expires: grokBuildEntry.expires as number,
+          });
+          try {
+            const current = piAuth!;
+            current["grok-build"] = { ...current["grok-build"], ...r, type: "oauth" };
+            const dir = dirname(PI_AUTH_PATH);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+            writeFileSync(PI_AUTH_PATH, JSON.stringify(current, null, 2));
+            chmodSync(PI_AUTH_PATH, 0o600);
+          } catch (writeErr) {
+            console.warn(
+              `[pi-xai] Failed to persist refreshed xAI token for grok-build: ${writeErr}`,
+            );
+          }
+          return r;
         });
-        try {
-          const current = piAuth!;
-          current["grok-build"] = { ...current["grok-build"], ...r, type: "oauth" };
-          const dir = dirname(PI_AUTH_PATH);
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-          writeFileSync(PI_AUTH_PATH, JSON.stringify(current, null, 2));
-          chmodSync(PI_AUTH_PATH, 0o600);
-        } catch (writeErr) {
-          console.warn(`[pi-xai] Failed to persist refreshed xAI token for grok-build: ${writeErr}`);
-        }
-        return r;
-      });
-      return { apiKey: refreshed.access, source: `pi-auth:${PI_AUTH_PATH}:grok-build (refreshed)` };
-    }
-      return { apiKey: grokBuildEntry.access, source: `pi-auth:${PI_AUTH_PATH}:grok-build (oauth)` };
+        return {
+          apiKey: refreshed.access,
+          source: `pi-auth:${PI_AUTH_PATH}:grok-build (refreshed)`,
+        };
+      }
+      return {
+        apiKey: grokBuildEntry.access,
+        source: `pi-auth:${PI_AUTH_PATH}:grok-build (oauth)`,
+      };
     }
   }
 
@@ -560,26 +594,26 @@ export async function getEffectiveXaiApiKey(options?: {
       const storedExpired = typeof xaiEntry.expires === "number" && Date.now() >= xaiEntry.expires;
       const jwtExpiring = isXaiAccessTokenExpiring(xaiEntry.access as string);
       if ((storedExpired || jwtExpiring) && xaiEntry.refresh) {
-      const refreshed = await withRefreshLock("xai", async () => {
-        const r = await refreshXaiToken({
-          access: xaiEntry.access!,
-          refresh: xaiEntry.refresh as string,
-          expires: xaiEntry.expires as number,
+        const refreshed = await withRefreshLock("xai", async () => {
+          const r = await refreshXaiToken({
+            access: xaiEntry.access!,
+            refresh: xaiEntry.refresh as string,
+            expires: xaiEntry.expires as number,
+          });
+          try {
+            const current = piAuth!;
+            current.xai = { ...current.xai, ...r, type: "oauth" };
+            const dir = dirname(PI_AUTH_PATH);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+            writeFileSync(PI_AUTH_PATH, JSON.stringify(current, null, 2));
+            chmodSync(PI_AUTH_PATH, 0o600);
+          } catch (writeErr) {
+            console.warn(`[pi-xai] Failed to persist refreshed xAI token for xai: ${writeErr}`);
+          }
+          return r;
         });
-        try {
-          const current = piAuth!;
-          current.xai = { ...current.xai, ...r, type: "oauth" };
-          const dir = dirname(PI_AUTH_PATH);
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-          writeFileSync(PI_AUTH_PATH, JSON.stringify(current, null, 2));
-          chmodSync(PI_AUTH_PATH, 0o600);
-        } catch (writeErr) {
-          console.warn(`[pi-xai] Failed to persist refreshed xAI token for xai: ${writeErr}`);
-        }
-        return r;
-      });
-      return { apiKey: refreshed.access, source: `pi-auth:${PI_AUTH_PATH}:xai (refreshed)` };
-    }
+        return { apiKey: refreshed.access, source: `pi-auth:${PI_AUTH_PATH}:xai (refreshed)` };
+      }
       return { apiKey: xaiEntry.access, source: `pi-auth:${PI_AUTH_PATH}:xai (oauth)` };
     }
   }
@@ -592,7 +626,10 @@ export async function getEffectiveXaiApiKey(options?: {
 
   // 5. Legacy settings.json xai.apiKey
   if (options?.settingsApiKey) {
-    return { apiKey: options.settingsApiKey, source: options.settingsSource || "settings:xai.apiKey" };
+    return {
+      apiKey: options.settingsApiKey,
+      source: options.settingsSource || "settings:xai.apiKey",
+    };
   }
 
   return undefined;
@@ -633,7 +670,10 @@ export async function autoImportGrokCliIfNeeded(): Promise<boolean> {
   // console.x.ai API key for voice).
   const now = Date.now();
   const payload = decodeJwtPayload(grok.accessToken);
-  const exp = typeof payload?.exp === "number" ? payload.exp * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000 : now + 24 * 60 * 60 * 1000;
+  const exp =
+    typeof payload?.exp === "number"
+      ? payload.exp * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000
+      : now + 24 * 60 * 60 * 1000;
   const grokBuildEntry = {
     type: "oauth" as const,
     access: grok.accessToken,
@@ -659,7 +699,7 @@ export async function autoImportGrokCliIfNeeded(): Promise<boolean> {
     // Non-fatal log for the user
     if (typeof console !== "undefined" && console.log) {
       console.log(
-        `[pi-xai] Auto-imported Grok Build credentials (${grok.email ?? "unknown"}) into ~/.pi/agent/auth.json under "grok-build"`
+        `[pi-xai] Auto-imported Grok Build credentials (${grok.email ?? "unknown"}) into ~/.pi/agent/auth.json under "grok-build"`,
       );
     }
     return true;

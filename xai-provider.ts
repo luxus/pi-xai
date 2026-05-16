@@ -1,10 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { resolveXaiConfig } from "./xai-config.ts";
-import {
-  loginXai,
-  refreshXaiToken,
-  getXaiApiKeyFromCredentials,
-} from "./xai-oauth.ts";
+import { loginXai, refreshXaiToken, getXaiApiKeyFromCredentials } from "./xai-oauth.ts";
 
 export function registerXaiProvider(api: ExtensionAPI) {
   const config = resolveXaiConfig();
