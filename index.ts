@@ -1,54 +1,31 @@
 import { defineTool, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
-import { XaiClient } from "./xai-client.ts";
 import {
-  getRequiredXaiApiKey,
   resolveXaiConfig,
   getAgenticConfig,
+  getPiSettingsPaths,
   type ResolvedXaiConfig,
 } from "./xai-config.ts";
 import { registerXaiProvider } from "./xai-provider.ts";
 import {
   getEffectiveXaiApiKey,
-  readGrokCliAuth,
   autoImportGrokCliIfNeeded,
 } from "./xai-oauth.ts";
-import {
-  DEFAULT_XAI_TEXT_MODEL,
-  summarizeError,
-  type XaiTextLogger,
-} from "./xai-text-shared.ts";
-import {
-  generateMultiAgentWithXai,
-  generateResponseWithXai,
-  type MultiAgentResult,
-  type XaiResponseResult,
-  type XaiTool,
-} from "./xai-text.ts";
 
-function createLogger(): XaiTextLogger {
-  return console;
-}
-
-async function createRuntime(log = createLogger()): Promise<{
+async function createRuntime(): Promise<{
   apiKey: string;
   apiKeySource: string;
   config: ResolvedXaiConfig;
-  client: XaiClient;
-  log: XaiTextLogger;
 }> {
-  // Full resolution: env > Pi auth.json (including oauth + auto-refresh) > grok-cli file > settings
+  // Credential resolution now fully delegated to xai-oauth (grok-build OAuth priority,
+  // auto-refresh via JWT exp, grok-cli import, env XAI_API_KEY, Pi auth).
+  // xai-config only handles baseUrl + agentic settings (tiny).
   const effective = await getEffectiveXaiApiKey();
   if (!effective?.apiKey) {
-    // Fall back to the legacy sync path (will throw with a message suggesting /login grok-build)
-    const legacy = getRequiredXaiApiKey();
-    return {
-      apiKey: legacy.apiKey,
-      apiKeySource: legacy.source,
-      config: legacy.config,
-      client: new XaiClient({ apiKey: legacy.apiKey, baseUrl: legacy.config.xai.baseUrl, log }),
-      log,
-    };
+    const paths = getPiSettingsPaths();
+    throw new Error(
+      `Missing xAI API key. Run \`/login grok-build\` (native OAuth, no binary required), set XAI_API_KEY, or configure xai.apiKey in ${paths.project} or ${paths.user}. Existing ~/.grok/auth.json is auto-detected if present.`,
+    );
   }
 
   const config = resolveXaiConfig();
@@ -56,8 +33,6 @@ async function createRuntime(log = createLogger()): Promise<{
     apiKey: effective.apiKey,
     apiKeySource: effective.source,
     config,
-    client: new XaiClient({ apiKey: effective.apiKey, baseUrl: config.xai.baseUrl, log }),
-    log,
   };
 }
 
@@ -163,14 +138,14 @@ export default async function (api: ExtensionAPI) {
       }),
       async execute(_toolCallId, params) {
         const { prompt, model, system, previousResponseId, maxOutputTokens, temperature, store, include, tools, responseFormat, timeout } = params;
-        const { client, log } = await createRuntime();
+        const { apiKey, config } = await createRuntime();
         const input: Array<{ role: "user" | "developer"; content: string }> = [];
         if (system) {
           input.push({ role: "developer", content: system });
         }
         input.push({ role: "user", content: prompt });
 
-        const mappedTools = tools?.map((t: string) => ({ type: t as XaiTool["type"] }));
+        const mappedTools = tools?.map((t: string) => ({ type: t }));
         let parsedFormat: { type: "json_schema"; json_schema: { name: string; schema: Record<string, unknown>; strict?: boolean } } | undefined;
         if (responseFormat) {
           try {
@@ -182,23 +157,34 @@ export default async function (api: ExtensionAPI) {
         }
 
         const effectiveTimeout = timeout ?? (model?.includes("reasoning") ? 3_600_000 : 300_000);
+        const modelToUse = model || "grok-4";
 
-        const result = await generateResponseWithXai(
-          client,
-          {
-            model: model || DEFAULT_XAI_TEXT_MODEL,
-            input,
-            previousResponseId,
-            maxOutputTokens,
-            temperature,
-            store,
-            include,
-            tools: mappedTools,
-            responseFormat: parsedFormat,
-            timeout: effectiveTimeout,
-          },
-          log,
-        );
+        const body: Record<string, unknown> = { model: modelToUse, input };
+        if (previousResponseId) body.previous_response_id = previousResponseId;
+        if (maxOutputTokens !== undefined) body.max_output_tokens = maxOutputTokens;
+        if (temperature !== undefined) body.temperature = temperature;
+        if (store !== undefined) body.store = store;
+        if (include?.length) body.include = include;
+        if (mappedTools?.length) body.tools = mappedTools;
+        if (parsedFormat) body.text = { format: parsedFormat };
+
+        const url = `${config.xai.baseUrl.replace(/\/+$/, "")}/responses`;
+        const init: RequestInit = {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        };
+        if (effectiveTimeout) (init as any).signal = AbortSignal.timeout(effectiveTimeout);
+
+        const res = await fetch(url, init);
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const err = new Error(`xAI API error: ${res.status} ${text.slice(0, 500)}`);
+          if (res.status === 401) (err as any).reloginRequired = true;
+          throw err;
+        }
+        const result = await res.json();
+
         return textResult(formatResponseSummary(result, "xAI Response"));
       },
     }),
@@ -226,7 +212,7 @@ export default async function (api: ExtensionAPI) {
       }),
       async execute(_toolCallId, params, _signal, onUpdate) {
         const { prompt, reasoningEffort, tools, previousResponseId, store, include, timeout } = params;
-        const { client, log } = await createRuntime();
+        const { apiKey, config } = await createRuntime();
         const agentCount = reasoningEffort === "high" || reasoningEffort === "xhigh" ? 16 : 4;
         
         onUpdate?.({
@@ -235,21 +221,34 @@ export default async function (api: ExtensionAPI) {
         });
 
         const input = [{ role: "user" as const, content: prompt }];
-        const mappedTools = tools?.map((t: string) => ({ type: t as XaiTool["type"] }));
+        const mappedTools = tools?.map((t: string) => ({ type: t }));
 
-        const result = await generateMultiAgentWithXai(
-          client,
-          {
-            input,
-            reasoningEffort: reasoningEffort || "medium",
-            tools: mappedTools,
-            previousResponseId,
-            store,
-            include,
-            timeout: timeout ?? 3_600_000,
-          },
-          log,
-        );
+        const body: Record<string, unknown> = { model: "grok-4.20-multi-agent", input };
+        if (reasoningEffort) {
+          body.reasoning = { effort: reasoningEffort };
+        }
+        if (previousResponseId) body.previous_response_id = previousResponseId;
+        if (mappedTools?.length) body.tools = mappedTools;
+        if (store !== undefined) body.store = store;
+        if (include?.length) body.include = include;
+
+        const effectiveTimeout = timeout ?? 3_600_000;
+        const url = `${config.xai.baseUrl.replace(/\/+$/, "")}/responses`;
+        const init: RequestInit = {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        };
+        if (effectiveTimeout) (init as any).signal = AbortSignal.timeout(effectiveTimeout);
+
+        const res = await fetch(url, init);
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const err = new Error(`xAI API error: ${res.status} ${text.slice(0, 500)}`);
+          if (res.status === 401) (err as any).reloginRequired = true;
+          throw err;
+        }
+        const result = await res.json();
         
         onUpdate?.({
           content: [{ type: "text" as const, text: `✅ Research complete. ${result.usage?.output_tokens ?? "?"} output tokens (${result.usage?.output_tokens_details?.reasoning_tokens ?? 0} reasoning).` }],

@@ -1,8 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import {
-  getRequiredXaiApiKey,
-  resolveXaiConfig,
-} from "./xai-config.ts";
+import { resolveXaiConfig } from "./xai-config.ts";
 import {
   loginXai,
   refreshXaiToken,
