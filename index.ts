@@ -67,37 +67,16 @@ function citationsSummary(citations: string[] | undefined): string {
   return `\n\n**Sources consulted**\n${lines.join("\n")}`;
 }
 
-function responseSummary(result: XaiResponseResult): string {
-  const items = result.output ?? [];
-  const textParts: string[] = [];
-  const toolCalls: string[] = [];
-
-  for (const item of items) {
-    if (item.type === "message" && Array.isArray(item.content)) {
-      for (const c of item.content) {
-        if (c.type === "output_text" && typeof c.text === "string") {
-          textParts.push(c.text);
-        }
-      }
-    } else if (["function_call", "web_search_call", "x_search_call", "code_interpreter_call"].includes(item.type)) {
-      const name = typeof item.name === "string" ? item.name : item.type;
-      toolCalls.push(`- Tool call: ${name}`);
-    }
-  }
-
-  const text = textParts.join("\n");
-  const toolCallText = toolCalls.join("\n");
-  const usage = result.usage
-    ? `Tokens: ${result.usage.input_tokens ?? "?"} in / ${result.usage.output_tokens ?? "?"} out`
-    : "";
-  const reasoning = result.usage?.output_tokens_details?.reasoning_tokens
-    ? ` (reasoning: ${result.usage.output_tokens_details.reasoning_tokens})`
-    : "";
-  const body = [text, toolCallText].filter(Boolean).join("\n\n");
-  return `**xAI Response** (${result.model})\n\n${body || "(no text output)"}\n\n${usage}${reasoning}${citationsSummary(result.citations)}`;
-}
-
-function multiAgentSummary(result: MultiAgentResult): string {
+function formatResponseSummary(
+  result: {
+    model: string;
+    output?: any[];
+    usage?: any;
+    citations?: string[];
+    server_side_tool_usage?: Record<string, number>;
+  },
+  title: string,
+): string {
   const items = result.output ?? [];
   const textParts: string[] = [];
   const toolCalls: string[] = [];
@@ -127,7 +106,7 @@ function multiAgentSummary(result: MultiAgentResult): string {
     ? `\nTool calls: ${Object.entries(result.server_side_tool_usage).map(([k, v]) => `${k}=${v}`).join(", ")}`
     : "";
   const body = [text, toolCallText].filter(Boolean).join("\n\n");
-  return `**xAI Multi-Agent** (${result.model})\n\n${body || "(no text output)"}\n\n${usage}${reasoning}${tools}${citationsSummary(result.citations)}`;
+  return `**${title}** (${result.model})\n\n${body || "(no text output)"}\n\n${usage}${reasoning}${tools}${citationsSummary(result.citations)}`;
 }
 
 function textResult(text: string): { content: Array<{ type: "text"; text: string }>; details: string } {
@@ -220,7 +199,7 @@ export default async function (api: ExtensionAPI) {
           },
           log,
         );
-        return textResult(responseSummary(result));
+        return textResult(formatResponseSummary(result, "xAI Response"));
       },
     }),
   );
@@ -277,7 +256,7 @@ export default async function (api: ExtensionAPI) {
           details: `research-done: ${result.id}`,
         });
 
-        return textResult(multiAgentSummary(result));
+        return textResult(formatResponseSummary(result, "xAI Multi-Agent"));
       },
     }),
   );
