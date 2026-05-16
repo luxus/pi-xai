@@ -54,7 +54,7 @@
     "**/*.ts": [
       "oxfmt --write",
       "oxlint",
-      "tsgo --noEmit"
+      "sh -c 'tsgo --noEmit --project tsconfig.json'"
     ]
   },
   "engines": {

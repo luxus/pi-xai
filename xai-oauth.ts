@@ -118,32 +118,7 @@ export function isXaiAccessTokenExpiring(
   return exp <= Date.now() / 1000 + Math.max(0, skewSeconds);
 }
 
-// Local PKCE generator (Web Crypto, works in Node 20+/Bun + browsers).
-// Matches the implementation in @mariozechner/pi-ai utils/oauth/pkce.ts
-function base64urlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
-
-async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
-  const verifierBytes = new Uint8Array(32);
-  crypto.getRandomValues(verifierBytes);
-  const verifier = base64urlEncode(verifierBytes);
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const challenge = base64urlEncode(new Uint8Array(hashBuffer));
-
-  return { verifier, challenge };
-}
-
 export let PI_AUTH_PATH = resolve(homedir(), ".pi/agent/auth.json");
-
-// (Old browser PKCE helpers removed — we now use Device Code Flow for grok-build)
 
 async function refreshXaiAccessToken(refreshToken: string): Promise<{
   access_token: string;
@@ -703,7 +678,7 @@ export async function autoImportGrokCliIfNeeded(): Promise<boolean> {
       );
     }
     return true;
-  } catch (err) {
+  } catch {
     // Silent fail — user can still use the tools via the direct grok cli reader
     return false;
   }

@@ -94,6 +94,34 @@ function textResult(text: string): {
   return { content: [{ type: "text" as const, text }], details: text };
 }
 
+/** Tiny internal helper to avoid duplicating fetch + error + reloginRequired logic
+ * (addresses review duplication concern while staying within the single index.ts file
+ * and preserving the aggressive inlining goal of steps 4-8).
+ */
+async function callXaiResponses(
+  apiKey: string,
+  baseUrl: string,
+  body: Record<string, unknown>,
+  timeout?: number,
+): Promise<any> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/responses`;
+  const init: RequestInit & { signal?: AbortSignal } = {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  if (timeout) init.signal = AbortSignal.timeout(timeout);
+
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const err = new Error(`xAI API error: ${res.status} ${text.slice(0, 500)}`);
+    if (res.status === 401) (err as any).reloginRequired = true;
+    throw err;
+  }
+  return res.json();
+}
+
 export default async function (api: ExtensionAPI) {
   // Auto-import any existing Grok CLI credentials from ~/.grok/auth.json (if present)
   // into the "grok-build" slot. This is a convenience only — the primary way to
@@ -204,8 +232,12 @@ export default async function (api: ExtensionAPI) {
           }
         }
 
-        const effectiveTimeout = timeout ?? (model?.includes("reasoning") ? 3_600_000 : 300_000);
         const modelToUse = model || "grok-4";
+        const isReasoningModel =
+          modelToUse.includes("4.3") ||
+          modelToUse === "grok-build" ||
+          modelToUse.includes("reasoning");
+        const effectiveTimeout = timeout ?? (isReasoningModel ? 3_600_000 : 300_000);
 
         const body: Record<string, unknown> = { model: modelToUse, input };
         if (previousResponseId) body.previous_response_id = previousResponseId;
@@ -216,22 +248,7 @@ export default async function (api: ExtensionAPI) {
         if (mappedTools?.length) body.tools = mappedTools;
         if (parsedFormat) body.text = { format: parsedFormat };
 
-        const url = `${config.xai.baseUrl.replace(/\/+$/, "")}/responses`;
-        const init: RequestInit = {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        };
-        if (effectiveTimeout) (init as any).signal = AbortSignal.timeout(effectiveTimeout);
-
-        const res = await fetch(url, init);
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          const err = new Error(`xAI API error: ${res.status} ${text.slice(0, 500)}`);
-          if (res.status === 401) (err as any).reloginRequired = true;
-          throw err;
-        }
-        const result = await res.json();
+        const result = await callXaiResponses(apiKey, config.xai.baseUrl, body, effectiveTimeout);
 
         return textResult(formatResponseSummary(result, "xAI Response"));
       },
@@ -302,22 +319,7 @@ export default async function (api: ExtensionAPI) {
         if (include?.length) body.include = include;
 
         const effectiveTimeout = timeout ?? 3_600_000;
-        const url = `${config.xai.baseUrl.replace(/\/+$/, "")}/responses`;
-        const init: RequestInit = {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        };
-        if (effectiveTimeout) (init as any).signal = AbortSignal.timeout(effectiveTimeout);
-
-        const res = await fetch(url, init);
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          const err = new Error(`xAI API error: ${res.status} ${text.slice(0, 500)}`);
-          if (res.status === 401) (err as any).reloginRequired = true;
-          throw err;
-        }
-        const result = await res.json();
+        const result = await callXaiResponses(apiKey, config.xai.baseUrl, body, effectiveTimeout);
 
         onUpdate?.({
           content: [

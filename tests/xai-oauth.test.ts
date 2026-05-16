@@ -1,6 +1,7 @@
 /**
- * Pruned to 10 essential OAuth tests (JWT expiry, XaiAuthError, refresh, getEffective priority, autoImport, constants).
- * Hermetic via temp paths. Matches Hermes parity for the critical paths.
+ * 9 essential OAuth tests (JWT expiry, XaiAuthError, refresh locking, getEffective priority,
+ * autoImport, constants). Hermetic via temp paths. Matches Hermes parity for the critical paths
+ * used by the two tools.
  */
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
@@ -32,6 +33,8 @@ let TEST_PI_PATH: string;
 function makeFakeJwt(expSeconds: number): string {
   const header = { alg: "none", typ: "JWT" };
   const payload = { exp: expSeconds, sub: "test" };
+  // btoa is provided globally by vitest (test env); source decodeJwtPayload already has
+  // the atob/Buffer fallback for cross-runtime robustness (Node/Bun/browser in Pi).
   const b64 = (o: any) =>
     btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return `${b64(header)}.${b64(payload)}.sig`;
@@ -59,7 +62,7 @@ function cleanupHermeticPaths() {
   __resetTestPathsToDefaults();
 }
 
-describe("xai-oauth (essential 10 tests — Hermes parity)", () => {
+describe("xai-oauth (9 essential tests — Hermes parity)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -117,7 +120,7 @@ describe("xai-oauth (essential 10 tests — Hermes parity)", () => {
     expect(e.name).toBe("XaiAuthError");
   });
 
-  test("refreshXaiToken surfaces reloginRequired for imported (no refresh) tokens", async () => {
+  test("refreshXaiToken throws clear error for imported tokens without refresh token", async () => {
     const cred = { access: "a", refresh: "", expires: 0, source: "grok-cli-import" } as any;
     await expect(refreshXaiToken(cred)).rejects.toThrow(
       /imported from the grok CLI and has no refresh token/,
