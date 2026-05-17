@@ -336,16 +336,13 @@ export default async function (api: ExtensionAPI) {
     }),
   );
 
-  // Experimental agentic tools (stolen from BlockedPath/pi-xai-oauth "registerXaiTools"
-  // for explicit callable surface parity after the OAuth integration).
-  // These are intentionally lightweight "prompt the model to act as search/code engine"
-  // simulations (exactly matching the reference prompts + grok-4.3 + reasoning effort).
-  // They reuse the project's createRuntime/callXaiResponses/formatResponseSummary/textResult
-  // so they get unified credential resolution (OAuth + env + grok-cli), consistent output
-  // formatting (tokens, citations, model header), and superior error messages.
-  // Complements (does not duplicate) the two rich tools and the native built-in tool
-  // injection in agentic mode. Registered as first-class tools so users can invoke them
-  // directly for controlled research scenarios.
+  // Experimental agentic tools — lightweight "prompt the model" simulations for web search,
+  // X/Twitter search, and code execution. These complement (do not duplicate) the two rich
+  // tools and the native built-in tool injection in agentic mode. They are exposed as
+  // first-class callable tools so users can invoke them directly when explicit control is desired.
+  //
+  // They reuse the project's existing helpers (createRuntime, callXaiResponses, etc.) for
+  // consistent auth resolution, error handling, and output formatting.
   api.registerTool(
     defineTool({
       name: "xai_web_search",

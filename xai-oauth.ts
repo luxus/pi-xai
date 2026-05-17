@@ -34,7 +34,7 @@ export const XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 export const XAI_OAUTH_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 export const XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 300; // 5 min
 
-// PKCE / Web OAuth constants (from second extension for browser redirect flow)
+// PKCE / Web OAuth constants (browser redirect flow support)
 export const XAI_OAUTH_DISCOVERY_URL = `${XAI_OAUTH_ISSUER}/.well-known/openid-configuration`;
 export const XAI_OAUTH_REDIRECT_HOST = "127.0.0.1";
 export const XAI_OAUTH_REDIRECT_PORT = 56121;
@@ -48,7 +48,7 @@ export const GROK_CLI_AUTH_CLIENT_ID = XAI_OAUTH_CLIENT_ID; // same client
 export const XAI_GROK_CLI_LEGACY_AUTH_SCOPE_KEY = "https://accounts.x.ai/sign-in";
 
 // =============================================================================
-// PKCE helper functions (adapted from second extension, with release polish)
+// PKCE + browser redirect helpers
 // =============================================================================
 
 function pkcePair(): { verifier: string; challenge: string } {
@@ -336,7 +336,7 @@ function hasReloginRequired(e: unknown): e is { reloginRequired: boolean } {
 }
 
 // =============================================================================
-// PKCE / Web OAuth types (stolen from second extension, adapted to existing style)
+// PKCE / Web OAuth types
 // =============================================================================
 
 type XaiDiscovery = {
@@ -884,7 +884,7 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
     }
   }
 
-  // Native path: offer Web PKCE (recommended, stolen from second extension) vs Device Code
+  // Native path: offer Web PKCE (recommended) vs Device Code fallback
   const cb: any = callbacks;
   const hasSelect = typeof cb.onSelect === "function";
 
