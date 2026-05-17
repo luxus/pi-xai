@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-17
+
+### Quickfix: Compatibility with @earendil-works Pi packages
+
+- Switched runtime dependencies from the `@mariozechner/*` fork to the current `@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai` packages (matching the runtime used by the second extension and modern Pi).
+- Updated all imports and one stale comment.
+- No behavior or API changes for users. This is a compatibility shim so the 0.6.0 feature set (Web PKCE OAuth + 5 tools) works correctly on current Pi installs.
+
 ## [0.6.0] - 2026-05-16
 
 ### Full surface parity with https://github.com/BlockedPath/pi-xai-oauth

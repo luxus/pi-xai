@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveXaiConfig } from "./xai-config.ts";
 import { loginXai, refreshXaiToken, getXaiApiKeyFromCredentials } from "./xai-oauth.ts";
 
@@ -15,9 +15,8 @@ export function registerXaiProvider(api: ExtensionAPI) {
     oauth: {
       name: "xAI (Grok Build)",
       // Enable PKCE callback server + manual redirect URL paste fallback in Pi core UI.
-      // (usesCallbackServer is part of the full OAuthProviderInterface in @mariozechner/pi-ai;
-      // cast to satisfy the ProviderConfig inline type in pi-coding-agent while still
-      // allowing the core's interactive-mode to read it for showing onManualCodeInput.)
+      // (usesCallbackServer signals the Pi core to provide onManualCodeInput + paste UI
+      // for the localhost callback flow when browser redirect is blocked.)
       usesCallbackServer: true,
       login: loginXai,
       refreshToken: refreshXaiToken,
