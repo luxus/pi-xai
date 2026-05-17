@@ -20,6 +20,8 @@ import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai"
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:http";
 
 // =============================================================================
 // Constants (match official Grok CLI / Hermes exactly)
@@ -32,8 +34,286 @@ export const XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 export const XAI_OAUTH_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 export const XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 300; // 5 min
 
+// PKCE / Web OAuth constants (from second extension for browser redirect flow)
+export const XAI_OAUTH_DISCOVERY_URL = `${XAI_OAUTH_ISSUER}/.well-known/openid-configuration`;
+export const XAI_OAUTH_REDIRECT_HOST = "127.0.0.1";
+export const XAI_OAUTH_REDIRECT_PORT = 56121;
+export const XAI_OAUTH_REDIRECT_PATH = "/callback";
+export const XAI_OAUTH_REFRESH_SKEW_MS = 2 * 60 * 1000; // 2 min (slightly tighter than device skew for web flow)
+
 export let GROK_CLI_AUTH_PATH = resolve(homedir(), ".grok", "auth.json");
 export const GROK_CLI_AUTH_CLIENT_ID = XAI_OAUTH_CLIENT_ID; // same client
+
+// Legacy scope key still seen in some older Grok CLI auth.json files
+export const XAI_GROK_CLI_LEGACY_AUTH_SCOPE_KEY = "https://accounts.x.ai/sign-in";
+
+// =============================================================================
+// PKCE helper functions (adapted from second extension, with release polish)
+// =============================================================================
+
+function pkcePair(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  return { verifier, challenge };
+}
+
+function validateXaiEndpoint(url: string): string {
+  const parsed = new URL(url);
+  const host = parsed.hostname.toLowerCase();
+  if (parsed.protocol !== "https:" || (host !== "x.ai" && !host.endsWith(".x.ai"))) {
+    throw new Error(`xAI OAuth discovery returned an unexpected endpoint: ${url}`);
+  }
+  return url;
+}
+
+async function xaiDiscovery(signal?: AbortSignal): Promise<XaiDiscovery> {
+  const response = await fetch(XAI_OAUTH_DISCOVERY_URL, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new XaiAuthError(`xAI OAuth discovery failed: ${response.status} ${text}`, {
+      reloginRequired: true,
+      code: "xai_discovery_failed",
+    });
+  }
+
+  const data = (await response.json()) as Partial<XaiDiscovery>;
+  if (!data.authorization_endpoint || !data.token_endpoint) {
+    throw new XaiAuthError(
+      "xAI OAuth discovery response did not include authorization/token endpoints",
+      {
+        reloginRequired: true,
+        code: "xai_discovery_invalid",
+      },
+    );
+  }
+
+  return {
+    authorization_endpoint: validateXaiEndpoint(data.authorization_endpoint),
+    token_endpoint: validateXaiEndpoint(data.token_endpoint),
+  };
+}
+
+function callbackCorsOrigin(origin: string | undefined): string | undefined {
+  return origin === "https://accounts.x.ai" || origin === "https://auth.x.ai" ? origin : undefined;
+}
+
+async function startCallbackServer(): Promise<{
+  redirectUri: string;
+  waitForCallback: (signal?: AbortSignal) => Promise<CallbackResult>;
+  resolveCallback: (result: CallbackResult) => void;
+  close: () => void;
+}> {
+  let resolveCallback!: (result: CallbackResult) => void;
+  const callbackPromise = new Promise<CallbackResult>((resolve) => {
+    resolveCallback = resolve;
+  });
+
+  const makeServer = () =>
+    createServer((req, res) => {
+      const origin = callbackCorsOrigin(req.headers.origin);
+      const writeCors = () => {
+        if (!origin) return;
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        res.setHeader("Access-Control-Allow-Private-Network", "true");
+        res.setHeader("Vary", "Origin");
+      };
+
+      if (req.method === "OPTIONS") {
+        writeCors();
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      const url = new URL(req.url || "/", `http://${XAI_OAUTH_REDIRECT_HOST}`);
+      if (url.pathname !== XAI_OAUTH_REDIRECT_PATH) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Not found");
+        return;
+      }
+
+      const result: CallbackResult = {
+        code: url.searchParams.get("code") || undefined,
+        state: url.searchParams.get("state") || undefined,
+        error: url.searchParams.get("error") || undefined,
+        error_description: url.searchParams.get("error_description") || undefined,
+      };
+      resolveCallback(result);
+
+      writeCors();
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        result.error
+          ? "<html><body><h1>xAI authorization failed.</h1>You can close this tab.</body></html>"
+          : "<html><body><h1>xAI authorization received.</h1>You can close this tab.</body></html>",
+      );
+    });
+
+  const listen = (port: number): Promise<Server> =>
+    new Promise((resolve, reject) => {
+      const server = makeServer();
+      server.once("error", reject);
+      server.listen(port, XAI_OAUTH_REDIRECT_HOST, () => {
+        server.removeListener("error", reject);
+        resolve(server);
+      });
+    });
+
+  let server: Server;
+  try {
+    server = await listen(XAI_OAUTH_REDIRECT_PORT);
+  } catch {
+    server = await listen(0);
+  }
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new XaiAuthError("Could not determine xAI OAuth callback port", {
+      reloginRequired: true,
+      code: "xai_callback_port",
+    });
+  }
+
+  const redirectUri = `http://${XAI_OAUTH_REDIRECT_HOST}:${(address as { port: number }).port}${XAI_OAUTH_REDIRECT_PATH}`;
+
+  const close = () => {
+    try {
+      server.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  return {
+    redirectUri,
+    close,
+    resolveCallback,
+    waitForCallback: async (signal?: AbortSignal) => {
+      let timer: NodeJS.Timeout | undefined;
+      let abortHandler: (() => void) | undefined;
+
+      let timeoutReject: (e: Error) => void;
+      const timeout = new Promise<CallbackResult>((_, reject) => {
+        timeoutReject = reject;
+        timer = setTimeout(
+          () => reject(new Error("Timed out waiting for xAI OAuth callback")),
+          180_000,
+        );
+      });
+
+      if (signal) {
+        abortHandler = () => {
+          if (timer) clearTimeout(timer);
+          timeoutReject(new Error("xAI OAuth login was cancelled"));
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      }
+
+      try {
+        return await Promise.race([callbackPromise, timeout]);
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (abortHandler) signal?.removeEventListener("abort", abortHandler);
+        close();
+      }
+    },
+  };
+}
+
+function buildAuthorizeUrl(
+  discovery: XaiDiscovery,
+  redirectUri: string,
+  challenge: string,
+  state: string,
+  nonce: string,
+): string {
+  // Match the official Grok CLI authorize URL exactly.
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: XAI_OAUTH_CLIENT_ID,
+    redirect_uri: redirectUri,
+    scope: XAI_OAUTH_SCOPE,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state,
+    nonce,
+  });
+  return `${discovery.authorization_endpoint}?${params.toString()}`;
+}
+
+function parseCallbackInput(input: string): CallbackResult | undefined {
+  const trimmed = input.trim();
+  if (!trimmed) return undefined;
+
+  // Case 1: full redirect URL
+  if (trimmed.startsWith("http")) {
+    try {
+      const u = new URL(trimmed);
+      return {
+        code: u.searchParams.get("code") || undefined,
+        state: u.searchParams.get("state") || undefined,
+        error: u.searchParams.get("error") || undefined,
+        error_description: u.searchParams.get("error_description") || undefined,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Case 2: just the query string
+  if (trimmed.startsWith("?")) {
+    try {
+      const u = new URL(`http://127.0.0.1${trimmed}`);
+      return {
+        code: u.searchParams.get("code") || undefined,
+        state: u.searchParams.get("state") || undefined,
+        error: u.searchParams.get("error") || undefined,
+        error_description: u.searchParams.get("error_description") || undefined,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Case 3: bare code
+  if (/^[A-Za-z0-9_-]{20,}$/.test(trimmed)) {
+    return { code: trimmed };
+  }
+
+  return undefined;
+}
+
+async function exchangeXaiToken(
+  tokenEndpoint: string,
+  body: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<XaiTokenPayload> {
+  const response = await fetch(tokenEndpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(body).toString(),
+    signal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new XaiAuthError(`xAI token request failed: ${response.status} ${text}`, {
+      reloginRequired: true,
+      code: "xai_token_exchange_failed",
+    });
+  }
+
+  return (await response.json()) as XaiTokenPayload;
+}
 
 // =============================================================================
 // Typed error + JWT helpers (hardening matching Hermes Agent xAI OAuth)
@@ -54,6 +334,30 @@ export class XaiAuthError extends Error {
 function hasReloginRequired(e: unknown): e is { reloginRequired: boolean } {
   return !!e && typeof (e as any).reloginRequired === "boolean";
 }
+
+// =============================================================================
+// PKCE / Web OAuth types (stolen from second extension, adapted to existing style)
+// =============================================================================
+
+type XaiDiscovery = {
+  authorization_endpoint: string;
+  token_endpoint: string;
+};
+
+type XaiTokenPayload = {
+  access_token?: string;
+  refresh_token?: string;
+  id_token?: string;
+  expires_in?: number;
+  token_type?: string;
+};
+
+type CallbackResult = {
+  code?: string;
+  state?: string;
+  error?: string;
+  error_description?: string;
+};
 
 // Simple per-provider in-memory lock (Map of key -> Promise) to serialize
 // concurrent refreshXaiToken calls for the same entry. xAI refresh tokens
@@ -179,6 +483,7 @@ export function readGrokCliAuth():
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") return undefined;
 
+    // Canonical key used by current Grok CLI
     const targetPrefix = "https://auth.x.ai::";
     for (const [key, value] of Object.entries(parsed)) {
       if (typeof key !== "string" || !key.startsWith(targetPrefix)) continue;
@@ -194,6 +499,30 @@ export function readGrokCliAuth():
           source: `grok-cli:${GROK_CLI_AUTH_PATH}`,
         };
       }
+    }
+
+    // Legacy key still present in some older Grok CLI auth files
+    const legacy = parsed[XAI_GROK_CLI_LEGACY_AUTH_SCOPE_KEY];
+    const legacyAccess =
+      legacy && typeof legacy === "object"
+        ? (legacy as any).key || (legacy as any).access_token || (legacy as any).token
+        : "";
+    if (legacyAccess) {
+      return {
+        accessToken: String(legacyAccess),
+        email: undefined,
+        source: `grok-cli-legacy:${GROK_CLI_AUTH_PATH}`,
+      };
+    }
+
+    // Top-level fallbacks (very old or non-standard layouts)
+    const topLevelAccess = (parsed as any).access_token || (parsed as any).token;
+    if (topLevelAccess) {
+      return {
+        accessToken: String(topLevelAccess),
+        email: undefined,
+        source: `grok-cli-top:${GROK_CLI_AUTH_PATH}`,
+      };
     }
   } catch {
     // corrupt file — ignore
@@ -387,6 +716,113 @@ async function performNativeDeviceCodeLogin(
 // =============================================================================
 // Import from official `grok login` (the binary)
 // =============================================================================
+// PKCE Web login implementation (with release hygiene: guaranteed server close + signal propagation)
+// =============================================================================
+
+async function performXaiPkceLogin(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+  callbacks.onProgress?.("Starting native xAI login (Web PKCE + browser)...");
+
+  const discovery = await xaiDiscovery(callbacks.signal);
+  const callbackServer = await startCallbackServer();
+
+  try {
+    const { verifier, challenge } = pkcePair();
+    const state = randomUUID().replace(/-/g, "");
+    const nonce = randomUUID().replace(/-/g, "");
+    const authorizeUrl = buildAuthorizeUrl(
+      discovery,
+      callbackServer.redirectUri,
+      challenge,
+      state,
+      nonce,
+    );
+
+    callbacks.onAuth({
+      url: authorizeUrl,
+      instructions:
+        "If the automatic open uses the wrong browser/profile, copy the URL and paste the full redirect URL (or just the ?code=... part) into the field below (or open it manually in your preferred browser).",
+    });
+
+    callbacks.onProgress?.(`Waiting for xAI OAuth callback on ${callbackServer.redirectUri}...`);
+
+    const manualCodePromise = callbacks.onManualCodeInput?.();
+    if (manualCodePromise) {
+      manualCodePromise
+        .then((input: string) => {
+          if (input) {
+            const manual = parseCallbackInput(input);
+            if (manual) callbackServer.resolveCallback(manual);
+          }
+        })
+        .catch(() => {
+          // Cancellation handled by signal / login dialog.
+        });
+    }
+
+    const callback = await callbackServer.waitForCallback(callbacks.signal);
+    if (callback.error) {
+      throw new XaiAuthError(
+        `xAI authorization failed: ${callback.error_description || callback.error}`,
+        {
+          reloginRequired: true,
+          code: "xai_pkce_auth_error",
+        },
+      );
+    }
+    if (callback.state && callback.state !== state) {
+      throw new XaiAuthError("xAI authorization failed: state mismatch", {
+        reloginRequired: true,
+        code: "xai_pkce_state_mismatch",
+      });
+    }
+    if (!callback.code) {
+      throw new XaiAuthError("xAI authorization failed: no authorization code returned", {
+        reloginRequired: true,
+        code: "xai_pkce_no_code",
+      });
+    }
+
+    callbacks.onProgress?.("Exchanging xAI authorization code...");
+    const data = await exchangeXaiToken(
+      discovery.token_endpoint,
+      {
+        grant_type: "authorization_code",
+        code: callback.code,
+        redirect_uri: callbackServer.redirectUri,
+        client_id: XAI_OAUTH_CLIENT_ID,
+        code_verifier: verifier,
+      },
+      callbacks.signal,
+    );
+
+    if (!data.access_token) {
+      throw new XaiAuthError("xAI token response did not include an access token", {
+        reloginRequired: true,
+        code: "xai_pkce_no_access",
+      });
+    }
+    const refresh = data.refresh_token || "";
+    if (!refresh) {
+      throw new XaiAuthError(
+        "xAI token response did not include a refresh token (expected for offline_access)",
+        {
+          reloginRequired: true,
+          code: "xai_pkce_no_refresh",
+        },
+      );
+    }
+
+    const expires =
+      Date.now() + (data.expires_in || 3600) * 1000 - XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS * 1000;
+
+    callbacks.onProgress?.("Native PKCE login successful!");
+    return { access: data.access_token, refresh, expires, source: "native-pkce-web" };
+  } finally {
+    callbackServer.close();
+  }
+}
+
+// =============================================================================
 
 function importFromGrokCli(grokCli: { accessToken: string; email?: string }): OAuthCredentials {
   const now = Date.now();
@@ -438,7 +874,7 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
         callbacks.onProgress?.("Importing credentials from Grok CLI...");
         return importFromGrokCli(existing);
       }
-      // else fall through to native
+      // else fall through to native choice below
     } else {
       // No onSelect support — just import automatically (best effort)
       callbacks.onProgress?.(
@@ -448,7 +884,36 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
     }
   }
 
-  // No existing grok CLI login, or user chose native → do Device Code Flow
+  // Native path: offer Web PKCE (recommended, stolen from second extension) vs Device Code
+  const cb: any = callbacks;
+  const hasSelect = typeof cb.onSelect === "function";
+
+  if (hasSelect) {
+    const choice = await cb.onSelect!({
+      message: "Choose native xAI login method:",
+      options: [
+        {
+          id: "web",
+          label: "Web login with browser (PKCE + localhost callback, recommended)",
+        },
+        {
+          id: "device",
+          label: "Device code (for terminals without browser, headless, CI, remote)",
+        },
+      ],
+    });
+
+    if (choice === "web") {
+      return performXaiPkceLogin(callbacks);
+    }
+    // device falls through
+  } else {
+    // Older clients without onSelect → default to the much better Web PKCE experience
+    callbacks.onProgress?.("Starting Web PKCE login (recommended)...");
+    return performXaiPkceLogin(callbacks);
+  }
+
+  // Device Code Flow (explicit fallback)
   return performNativeDeviceCodeLogin(callbacks);
 }
 
