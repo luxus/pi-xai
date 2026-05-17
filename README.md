@@ -1,6 +1,8 @@
 # pi-xai
 
-Pi extension for xAI Grok Build (Coding Plan) — Responses API, native OAuth, 5 tools (2 rich + 3 experimental agentic) + automatic agentic mode.
+Pi extension for xAI Grok Build — Responses API, native OAuth, 5 tools + automatic agentic mode.
+
+**Note:** Full access to Grok Build requires a **SuperGrok Heavy** subscription (see below).
 
 ## Features
 
@@ -13,6 +15,15 @@ Pi extension for xAI Grok Build (Coding Plan) — Responses API, native OAuth, 5
 Models (via `/model grok-build/...`): `grok-build` (primary Coding Plan alias), `grok-4.3`, `grok-4.3-latest`.
 
 Everything works with Grok Build OAuth or plain `XAI_API_KEY`.
+
+## Getting Grok Build Access
+
+The `grok-build` provider and model require a **SuperGrok Heavy** subscription.
+
+- SuperGrok has a free 3-day trial.
+- When upgrading from SuperGrok, look for the limited offer to get **SuperGrok Heavy** for $99/month for the first 6 months.
+
+![SuperGrok Heavy offer](assets/supergrok-heavy-offer.png)
 
 ## Quick start
 
