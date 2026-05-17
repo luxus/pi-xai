@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-18
+
+### Full alignment with official xAI Responses API documentation
+
+- Complete audit against all official developer docs (generate-text, reasoning, structured-outputs, streaming, multi-agent, function-calling, web-search, x-search, code-execution, citations, streaming-and-sync, tools overview, collections-search).
+- **New power-user capabilities in the rich tools**:
+  - `reasoningEffort` parameter now available on `xai_generate_text` (parity with `xai_multi_agent` and normal grok-\* chat).
+  - Advanced built-in tool filters fully supported: `web_search` / `x_search` now accept full config objects with `allowed_domains`, `from_date`/`to_date`, `enable_image_understanding`, `enable_video_understanding`, `allowed_x_handles`, etc.
+- **Better observability**:
+  - Richer citation output now includes structured annotation count (`inline annotations: N`) when the model emits `annotations[]` on output text.
+- **Agentic mode improvements**:
+  - `collections_search` added to the default agentic tool set (alongside `web_search`, `x_search`, `code_interpreter`).
+- **Wire-format correctness**:
+  - Built-in code tool correctly uses the official Responses API name `code_interpreter` (not the SDK alias).
+- All changes were the absolute smallest possible diffs, strictly following the project's "smallest change + extend existing patterns + no new helpers" discipline. No test, README (beyond this release), or architecture changes.
+- Full quality gates on every edit.
+
 ## [0.6.3] - 2026-05-17
 
 ### Documentation

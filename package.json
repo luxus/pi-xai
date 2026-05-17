@@ -1,6 +1,6 @@
 {
   "name": "pi-xai",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Pi extension for xAI text generation via Responses API — reasoning, multi-agent, structured outputs, tools",
   "keywords": [
     "coding-plan",
@@ -41,15 +41,15 @@
     "typebox": "^1.1.24"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.74.1",
-    "@earendil-works/pi-coding-agent": "^0.74.1",
+    "@earendil-works/pi-ai": "^0.75.0",
+    "@earendil-works/pi-coding-agent": "^0.75.0",
     "@typescript/native-preview": "^7.0.0-dev.20260516.1",
     "husky": "^9.1.7",
-    "lint-staged": "^15.4.3",
+    "lint-staged": "^17.0.5",
     "oxfmt": "^0.50.0",
     "oxlint": "^1.65.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.8"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   },
   "lint-staged": {
     "**/*.ts": [

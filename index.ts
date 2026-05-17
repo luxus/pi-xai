@@ -52,12 +52,15 @@ function formatResponseSummary(
   const items = result.output ?? [];
   const textParts: string[] = [];
   const toolCalls: string[] = [];
+  let inlineAnnotations = 0; // richer citations: count structured annotations per xAI citations doc (output[].content[].annotations[] of type url_citation)
 
   for (const item of items) {
     if (item.type === "message" && Array.isArray(item.content)) {
       for (const c of item.content) {
         if (c.type === "output_text" && typeof c.text === "string") {
           textParts.push(c.text);
+          if (Array.isArray((c as any).annotations))
+            inlineAnnotations += (c as any).annotations.length;
         }
       }
     } else if (
@@ -84,7 +87,8 @@ function formatResponseSummary(
         .join(", ")}`
     : "";
   const body = [text, toolCallText].filter(Boolean).join("\n\n");
-  return `**${title}** (${result.model})\n\n${body || "(no text output)"}\n\n${usage}${reasoning}${tools}${citationsSummary(result.citations)}`;
+  const ann = inlineAnnotations ? `\nInline annotations: ${inlineAnnotations}` : "";
+  return `**${title}** (${result.model})\n\n${body || "(no text output)"}\n\n${usage}${reasoning}${tools}${citationsSummary(result.citations)}${ann}`;
 }
 
 function textResult(text: string): {
@@ -143,10 +147,57 @@ export default async function (api: ExtensionAPI) {
 
     const config = resolveXaiConfig();
     const agentic = getAgenticConfig(config);
-    if (!agentic.enabled || !agentic.tools.length) return;
+    if (agentic.enabled && agentic.tools.length) {
+      // Inject configured built-in tools into the request
+      payload.tools = agentic.tools.map((t) => ({ type: t }));
+    }
 
-    // Inject configured built-in tools into the request
-    payload.tools = agentic.tools.map((t) => ({ type: t }));
+    // Sanitize payload for xAI Responses compatibility.
+    // The core "openai-responses" driver (used for grok-4.3* via our provider)
+    // emits OpenAI-specific fields that xAI rejects with 422:
+    //   - reasoning: { effort, summary: "auto" }  → keep only { effort }
+    //   - include: ["reasoning.encrypted_content"]  → strip the xAI-incompatible entry
+    //   - seed, parallel_tool_calls, prompt_cache_retention, empty tools[], out-of-range temp/top_p
+    //
+    // This runs ONLY for grok-* models (narrow scope) + in-place mutation + implicit
+    // return undefined (correct hook contract per source commit a5dbb7b lesson).
+    // Ensures normal provider-driven usage of grok-* models (including reasoning
+    // models grok-4.3 / grok-4.3-latest) produces xAI-compatible payloads, matching
+    // the cleanliness already present in the hand-crafted bodies from custom tools.
+    delete (payload as any).seed;
+    delete (payload as any).parallel_tool_calls;
+    delete (payload as any).prompt_cache_retention;
+
+    if (Array.isArray((payload as any).tools) && (payload as any).tools.length === 0) {
+      delete (payload as any).tools;
+    }
+    const temp = (payload as any).temperature;
+    if (typeof temp === "number") {
+      (payload as any).temperature = Math.max(0, Math.min(2, temp));
+    }
+    const topP = (payload as any).top_p;
+    if (typeof topP === "number") {
+      (payload as any).top_p = Math.max(0, Math.min(1, topP));
+    }
+
+    const reasoning = (payload as any).reasoning;
+    if (reasoning && typeof reasoning === "object") {
+      const effort = (reasoning as Record<string, unknown>).effort;
+      (payload as any).reasoning = typeof effort === "string" ? { effort } : undefined;
+      if (!(payload as any).reasoning) delete (payload as any).reasoning;
+    }
+
+    const inc = (payload as any).include;
+    if (Array.isArray(inc)) {
+      const filtered = inc.filter(
+        (v: unknown) => typeof v === "string" && !v.includes("encrypted_content"),
+      );
+      if (filtered.length === 0) {
+        delete (payload as any).include;
+      } else {
+        (payload as any).include = filtered;
+      }
+    }
   });
 
   api.registerTool(
@@ -154,7 +205,7 @@ export default async function (api: ExtensionAPI) {
       name: "xai_generate_text",
       label: "xAI Generate Text",
       description:
-        "Generate text via xAI Responses API. Supports reasoning models, structured output, built-in tools (web_search, x_search, code_execution), stateful conversations via previous_response_id, and encrypted reasoning content.",
+        "Generate text via xAI Responses API. Supports reasoning models (optional reasoningEffort), structured output, built-in tools (web_search, x_search, code_interpreter, collections_search + advanced filters via object form), stateful conversations via previous_response_id, and encrypted reasoning content. Returns complete formatted summary (inline citations [[N]] appear in text by default per citations doc); for full streaming deltas use normal grok-* chat or direct Responses API stream=true (custom tools intentionally convenience-shaped, not raw stream).",
       parameters: Type.Object({
         prompt: Type.String({ description: "User prompt / message" }),
         model: Type.Optional(
@@ -162,6 +213,20 @@ export default async function (api: ExtensionAPI) {
             description:
               "Model override (default: grok-4 via XAI_API_KEY fallback; grok-4.3 / grok-build recommended with /login grok-build)",
           }),
+        ),
+        reasoningEffort: Type.Optional(
+          Type.Union(
+            [
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+            ],
+            {
+              description:
+                "low/medium/high/xhigh (reasoning depth for grok-4.3*; ignored for grok-build)",
+            },
+          ),
         ),
         system: Type.Optional(Type.String({ description: "System/developer instruction" })),
         previousResponseId: Type.Optional(
@@ -178,9 +243,9 @@ export default async function (api: ExtensionAPI) {
           }),
         ),
         tools: Type.Optional(
-          Type.Array(Type.String(), {
+          Type.Array(Type.Any(), {
             description:
-              "Built-in tools to enable: web_search, x_search, code_execution, collections_search",
+              'Built-in tools (Responses API names or full config objects): web_search, x_search, code_interpreter, collections_search. Simple strings for basic enable; pass objects e.g. {type:"web_search", enable_image_understanding:true} or {type:"x_search", from_date:"2025-01-01", allowed_x_handles:["..."]} for advanced filters/dates/understanding per official web-search & x-search docs. (Type.Any for power-user shapes; see Follow-up Discipline in workspace memory.)',
           }),
         ),
         responseFormat: Type.Optional(
@@ -196,6 +261,7 @@ export default async function (api: ExtensionAPI) {
         const {
           prompt,
           model,
+          reasoningEffort,
           system,
           previousResponseId,
           maxOutputTokens,
@@ -213,7 +279,7 @@ export default async function (api: ExtensionAPI) {
         }
         input.push({ role: "user", content: prompt });
 
-        const mappedTools = tools?.map((t: string) => ({ type: t }));
+        const mappedTools = tools?.map((t: any) => (typeof t === "string" ? { type: t } : t));
         let parsedFormat:
           | {
               type: "json_schema";
@@ -247,6 +313,9 @@ export default async function (api: ExtensionAPI) {
         if (include?.length) body.include = include;
         if (mappedTools?.length) body.tools = mappedTools;
         if (parsedFormat) body.text = { format: parsedFormat };
+        if (reasoningEffort && isReasoningModel && modelToUse !== "grok-build") {
+          body.reasoning = { effort: reasoningEffort };
+        }
 
         const result = await callXaiResponses(apiKey, config.xai.baseUrl, body, effectiveTimeout);
 
@@ -260,7 +329,7 @@ export default async function (api: ExtensionAPI) {
       name: "xai_multi_agent",
       label: "xAI Multi-Agent Research",
       description:
-        "Deep research via xAI Coding Plan models (grok-build / grok-4.3). Orchestrates multiple agents with built-in tools (web_search, x_search). Note: the special 'grok-build' model does not accept explicit reasoningEffort (it uses maximum reasoning internally).",
+        "Deep research via xAI Coding Plan models (grok-build / grok-4.3). Orchestrates multiple agents with built-in tools (web_search, x_search + advanced via objects, collections_search). Note: the special 'grok-build' model does not accept explicit reasoningEffort (it uses maximum reasoning internally). Returns formatted summary with progress via onUpdate; streaming content via core provider or raw API.",
       parameters: Type.Object({
         prompt: Type.String({ description: "Research query / question" }),
         reasoningEffort: Type.Optional(
@@ -275,8 +344,9 @@ export default async function (api: ExtensionAPI) {
           ),
         ),
         tools: Type.Optional(
-          Type.Array(Type.String(), {
-            description: "Built-in tools: web_search, x_search, code_execution, collections_search",
+          Type.Array(Type.Any(), {
+            description:
+              "Built-in tools (Responses API names or full config objects): web_search, x_search, code_interpreter, collections_search. Simple strings for basic; objects for advanced filters (allowed_x_handles, from_date/to_date, enable_image_understanding, enable_video_understanding, etc.) per x-search/web-search docs.",
           }),
         ),
         previousResponseId: Type.Optional(
@@ -307,7 +377,7 @@ export default async function (api: ExtensionAPI) {
         });
 
         const input = [{ role: "user" as const, content: prompt }];
-        const mappedTools = tools?.map((t: string) => ({ type: t }));
+        const mappedTools = tools?.map((t: any) => (typeof t === "string" ? { type: t } : t));
 
         const body: Record<string, unknown> = { model: "grok-4.20-multi-agent", input };
         if (reasoningEffort) {

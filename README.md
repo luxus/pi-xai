@@ -1,7 +1,13 @@
 # pi-xai
 
 <p align="center">
-  <img src="assets/pi-xai-logo.png" width="160" alt="pi-xai">
+  <img src="assets/pi-xai-logo.png" width="320" alt="pi-xai">
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/pi-xai"><img src="https://img.shields.io/npm/v/pi-xai.svg?style=flat-square" alt="npm version"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT"></a>
+  <a href="https://github.com/luxus/pi-xai"><img src="https://img.shields.io/github/stars/luxus/pi-xai?style=flat-square" alt="GitHub Stars"></a>
 </p>
 
 Pi extension for xAI Grok Build — Responses API, native OAuth, 5 tools + automatic agentic mode.
@@ -11,7 +17,7 @@ Pi extension for xAI Grok Build — Responses API, native OAuth, 5 tools + autom
 ## Features
 
 - **grok-build provider** — `/login grok-build` (native Web PKCE OAuth recommended with browser + manual-paste fallback, or Device Code for headless; no binary), Responses API (`openai-responses`), full reasoning
-- `xai_generate_text` — stateful conversations, structured JSON output, built-in tools, `previousResponseId`, custom timeout
+- `xai_generate_text` — stateful conversations, structured JSON output, built-in tools (with advanced filters), `reasoningEffort`, `previousResponseId`, custom timeout
 - `xai_multi_agent` — 4/16-agent research (`reasoningEffort`), live progress updates via `onUpdate`
 - **Agentic mode** — when any `grok-*` model is active, the extension auto-injects web_search / x_search / code_execution; the model decides what to call (the "magic")
 - Full OAuth implementation: Web PKCE (OIDC discovery, PKCE, callback server with CORS + manual input) + Device Code fallback, JWT expiry + per-key refresh lock, improved ~/.grok/auth.json parsing (canonical + legacy), optional import from Grok CLI
