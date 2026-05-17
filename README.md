@@ -1,5 +1,9 @@
 # pi-xai
 
+<p align="center">
+  <img src="assets/pi-xai-logo.png" width="160" alt="pi-xai">
+</p>
+
 Pi extension for xAI Grok Build — Responses API, native OAuth, 5 tools + automatic agentic mode.
 
 **Note:** Full access to Grok Build requires a **SuperGrok Heavy** subscription (see below).
