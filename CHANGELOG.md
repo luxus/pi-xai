@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-05-18
+
+### Hotfix
+
+- Removed `"collections_search"` from the automatic agentic tool defaults.  
+  This tool requires a `vector_store_ids` array and was causing 422 errors (`missing field 'vector_store_ids'`) for all users with default agentic mode enabled (the majority of users).  
+  The rich tools (`xai_generate_text` / `xai_multi_agent`) continue to support `collections_search` when passed with proper configuration.
+
 ## [0.7.0] - 2026-05-18
 
 ### Full alignment with official xAI Responses API documentation
