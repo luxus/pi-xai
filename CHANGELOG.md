@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-18
+
+### Major alignment with official xAI Responses API and reference implementation
+
+- Complete verification against the canonical `BlockedPath/pi-xai-oauth` extension and 10 upstream Hermes Agent commits from `NousResearch/hermes-agent`.
+- Hardened Web PKCE login flow to match the exact token exchange requirements from Hermes (defensive `code_challenge` echo + verifier guard at the authorization code exchange step).
+- Full payload sanitization and tool name correctness (`code_interpreter`) for the Responses API.
+- `reasoningEffort` parameter now available on `xai_generate_text`.
+- Advanced filters for built-in tools (`web_search` / `x_search`) supported via object form in the rich tools.
+- Richer citation output (structured annotation counts).
+- `collections_search` support (with safe defaults to avoid 422 errors).
+
+### Preparation for sibling extensions
+
+- `pi-xai` now exports its credential resolution logic (`getEffectiveXaiApiKey`, `resolveXaiConfig`, etc.).
+- `pi-xai-imagine` and `pi-xai-voice` have been upgraded to depend on `pi-xai` and **prefer Grok Build OAuth** (from `/login grok-build`) when available, with automatic fallback to local logic.
+- This means users only need to authenticate once with the main extension — the other two will automatically pick up the Coding Plan / Grok Build token.
+
+All changes followed the project's strict "smallest possible diff" and "extend existing patterns" discipline. Full quality gates passed.
+
 ## [0.7.1] - 2026-05-18
 
 ### Hotfix
