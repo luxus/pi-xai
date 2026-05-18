@@ -101,6 +101,6 @@ export function getAgenticConfig(config: ResolvedXaiConfig): {
 
   return {
     enabled: true,
-    tools: ["web_search", "x_search", "code_interpreter", "collections_search"],
+    tools: ["web_search", "x_search", "code_interpreter"],
   };
 }
