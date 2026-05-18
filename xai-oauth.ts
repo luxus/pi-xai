@@ -306,10 +306,13 @@ async function exchangeXaiToken(
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new XaiAuthError(`xAI token request failed: ${response.status} ${text}`, {
-      reloginRequired: true,
-      code: "xai_token_exchange_failed",
-    });
+    throw new XaiAuthError(
+      `xAI token exchange failed (HTTP ${response.status}).${text ? ` Response: ${text}` : ""}`,
+      {
+        reloginRequired: true,
+        code: "xai_token_exchange_failed",
+      },
+    );
   }
 
   return (await response.json()) as XaiTokenPayload;
@@ -783,17 +786,29 @@ async function performXaiPkceLogin(callbacks: OAuthLoginCallbacks): Promise<OAut
     }
 
     callbacks.onProgress?.("Exchanging xAI authorization code...");
-    const data = await exchangeXaiToken(
-      discovery.token_endpoint,
-      {
-        grant_type: "authorization_code",
-        code: callback.code,
-        redirect_uri: callbackServer.redirectUri,
-        client_id: XAI_OAUTH_CLIENT_ID,
-        code_verifier: verifier,
-      },
-      callbacks.signal,
-    );
+
+    // Match Hermes canonical (post-#26990): echo code_challenge at token step for xAI,
+    // guard empty verifier (never leak auth code to a server that cannot redeem it),
+    // and surface HTTP status in errors. This fixes "code_challenge is required" 400s.
+    if (!verifier) {
+      throw new XaiAuthError(
+        "xAI token exchange refused locally: PKCE code_verifier is empty. " +
+          "This is a bug — please report at https://github.com/NousResearch/hermes-agent/issues/26990.",
+        { reloginRequired: true, code: "xai_pkce_verifier_missing" },
+      );
+    }
+    const tokenBody: Record<string, string> = {
+      grant_type: "authorization_code",
+      code: callback.code,
+      redirect_uri: callbackServer.redirectUri,
+      client_id: XAI_OAUTH_CLIENT_ID,
+      code_verifier: verifier,
+    };
+    if (challenge) {
+      tokenBody.code_challenge = challenge;
+      tokenBody.code_challenge_method = "S256";
+    }
+    const data = await exchangeXaiToken(discovery.token_endpoint, tokenBody, callbacks.signal);
 
     if (!data.access_token) {
       throw new XaiAuthError("xAI token response did not include an access token", {

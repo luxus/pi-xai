@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-05-18
+
+### Fixed
+
+- **Critical 400 error after tool-using turns**: `"Invalid request content: Each message must have at least one content element."` when using grok-4.3 (grok-build) with agentic tools (`x_search`, `web_search`, etc.). The openai-responses driver could emit `content: []` (or `null` / `""`) on role-bearing history items after a tool result turn. Added a minimal defensive normalizer inside the existing `before_provider_request` hook (grok-* gate only, in-place mutation, no new helpers). Matches the exact reproduction from the live session log ("latest news on x" → successful tool call → follow-up question).
+- **Citation spacing for glued markers**: When the model places a `[[N]]` citation immediately after a URL it verbalized in the same sentence (e.g. `https://x.ai/cli.[[1]](https://x.com/...)`), the output was hard to read. Added targeted post-processing on `message_end` (normal chat + agentic mode) and inside `formatResponseSummary` (all rich tools) that inserts a separating space. Produces clean `url. [[N]](...)` while keeping the smallest possible diff and respecting the existing architecture.
+
+All changes followed the project's "smallest possible diff + extend existing patterns + document against memory" rules. Full typecheck / lint / format gates passed.
+
 ## [0.8.0] - 2026-05-18
 
 ### Major alignment with official xAI Responses API and reference implementation

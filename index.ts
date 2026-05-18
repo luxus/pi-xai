@@ -9,6 +9,16 @@ import {
 import { registerXaiProvider } from "./xai-provider.ts";
 import { getEffectiveXaiApiKey, autoImportGrokCliIfNeeded } from "./xai-oauth.ts";
 
+// Re-export credential helpers so sibling extensions (pi-xai-imagine, pi-xai-voice, etc.)
+// can prefer Grok Build OAuth when the user has run `/login grok-build`.
+export { getEffectiveXaiApiKey, autoImportGrokCliIfNeeded } from "./xai-oauth.ts";
+export {
+  resolveXaiConfig,
+  getAgenticConfig,
+  getPiSettingsPaths,
+  type ResolvedXaiConfig,
+} from "./xai-config.ts";
+
 async function createRuntime(): Promise<{
   apiKey: string;
   apiKeySource: string;
@@ -73,7 +83,9 @@ function formatResponseSummary(
     }
   }
 
-  const text = textParts.join("\n");
+  const text = textParts
+    .join("\n")
+    .replace(/((?:https?:\/\/|www\.)[^\s<>\]]+)(\[\[\d+\]\]\([^)]+\))/g, "$1 $2");
   const toolCallText = toolCalls.join("\n");
   const usage = result.usage
     ? `Tokens: ${result.usage.input_tokens ?? "?"} in / ${result.usage.output_tokens ?? "?"} out`
@@ -196,6 +208,55 @@ export default async function (api: ExtensionAPI) {
         delete (payload as any).include;
       } else {
         (payload as any).include = filtered;
+      }
+    }
+
+    // Defensive content normalization for xAI Responses API.
+    // The openai-responses driver (used for normal grok-* chat + agentic tools)
+    // can emit messages with `content: []` (or null/undefined, or "") after tool-using turns
+    // (built-in web_search / x_search do not record the *_call items in Pi history the same way).
+    // xAI rejects these with 400 "Each message must have at least one content element."
+    // (reproduced across sessions: "latest news on x", Swiss news, etc. → follow-up).
+    // In-place only, no helpers, gated to grok-*.
+    if (Array.isArray(payload.input)) {
+      for (const item of payload.input) {
+        if (!item || typeof item !== "object" || !item.role) continue;
+
+        const c = (item as any).content;
+        const isEmpty =
+          c === undefined || c === null || c === "" || (Array.isArray(c) && c.length === 0);
+
+        if (isEmpty) {
+          // Use the correct part type for the Responses wire format.
+          const partType =
+            (item as any).type === "message" && item.role === "assistant"
+              ? "output_text"
+              : "input_text";
+          (item as any).content = [{ type: partType, text: "" }];
+        }
+      }
+    }
+  });
+
+  // Post-process final assistant text for grok-* (normal chat + agentic search tools).
+  // The model sometimes places [[N]] citation markers directly after a URL it just
+  // verbalized (e.g. "https://x.ai/cli.[[1]](https://x.com/...)" ). The simple marker
+  // replacement in the core renderer then produces ugly glued output.
+  // We insert a space so the citation renders as a clean trailing reference, exactly
+  // like the other citations in the same response. Only touches grok-* messages.
+  api.on("message_end", (event) => {
+    const msg: any = event.message;
+    if (!msg?.model?.startsWith?.("grok-")) return;
+
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block?.type === "text" && typeof block.text === "string") {
+          // Turn "url.[[N]](citation)" into "url [[N]](citation)" (and handle [[N]] without url too)
+          block.text = block.text.replace(
+            /((?:https?:\/\/|www\.)[^\s<>\]]+)(\[\[\d+\]\]\([^)]+\))/g,
+            "$1 $2",
+          );
+        }
       }
     }
   });
