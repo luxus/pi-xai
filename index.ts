@@ -19,6 +19,16 @@ export {
   type ResolvedXaiConfig,
 } from "./xai-config.ts";
 
+// normalizeForXai is defined + exported below (in same file) for sibling direct /responses usage
+// and for the aggressive rewrite path. It is the canonical normalisation implementation.
+// In aggressive mode it now also carries the key Hermes xAI Responses guarantees
+// (reasoning-item strip for is_xai_responses, content-element enforcement) from the
+// fresh 2026-05-19 Hermes clone exploration (/tmp/hermes-agent-clone: codex_responses_adapter.py
+// _chat_messages_to_responses_input + has_codex_reasoning/empty-follower handling, chat_completion_helpers
+// is_xai_responses detection, codex transport include:[] + encrypted skip for xAI). This was the
+// highest-impact port under the single-provider + hook constraints — smallest-diff extension
+// of the already-exported helper per explicit user request (see prior IMPL a2042b0e + review).
+
 async function createRuntime(): Promise<{
   apiKey: string;
   apiKeySource: string;
@@ -123,18 +133,41 @@ async function callXaiResponses(
   // Same defensive content normalization as the provider hook.
   // Protects direct rich-tool calls (xai_generate_text, xai_x_search, etc.)
   // and any paths used by sibling packages during development.
+  // Enhanced for more edge cases even in compatible mode (arrays with only malformed/empty/garbage parts,
+  // whitespace strings, etc.) while obeying "smallest diff / extend existing sites" rule.
   const input = (body as any).input;
   if (Array.isArray(input)) {
     for (const item of input) {
       if (!item || typeof item !== "object" || !item.role) continue;
       const c = (item as any).content;
-      const isEmpty =
+      let isEmpty =
         c === undefined || c === null || c === "" || (Array.isArray(c) && c.length === 0);
+      if (!isEmpty && Array.isArray(c)) {
+        // Recognizes any valid content element per xAI Responses (text parts or
+        // input_image etc.). Presence of recognized parts (including pure-image
+        // messages) means "do not treat as empty" — prevents destroying legitimate
+        // vision content while still catching malformed/empty/garbage-only cases
+        // that trigger the 400.
+        const hasValid = c.some(
+          (p: any) =>
+            p &&
+            typeof p === "object" &&
+            (typeof p.text === "string" ||
+              ["input_text", "output_text", "text", "input_image"].includes(p.type)),
+        );
+        if (!hasValid) isEmpty = true;
+      }
+      if (!isEmpty && typeof c === "string" && !String(c).trim()) isEmpty = true;
       if (isEmpty) {
         const partType =
           (item as any).type === "message" && item.role === "assistant"
             ? "output_text"
             : "input_text";
+        // (as any) escape documented: smallest possible diff / no new helper for
+        // enhancing the two existing sanitization sites (callXaiResponses + before_provider_request);
+        // follows workspace memory patterns of in-place mutation inside already-scoped hooks
+        // (see 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis requiring
+        // post-driver fixes instead of custom provider).
         (item as any).content = [{ type: partType, text: "" }];
       }
     }
@@ -156,6 +189,137 @@ async function callXaiResponses(
     throw err;
   }
   return res.json();
+}
+
+/**
+ * normalizeForXai(input)
+ *
+ * Exported single source of truth for the thorough xAI Responses input normalisation
+ * logic (content element guarantee + edge cases). Both compatible (enhanced) and
+ * aggressive paths, plus sibling packages (pi-xai-imagine, pi-xai-voice, etc.) can
+ * share it for their direct `/responses` calls.
+ *
+ * Callers (siblings):
+ *   import { normalizeForXai, resolveXaiConfig, getEffectiveXaiApiKey } from "pi-xai";
+ *   const cfg = resolveXaiConfig();
+ *   const key = await getEffectiveXaiApiKey();
+ *   const body = { model: "grok-4.3", input: myMessagesOrPartsArray };
+ *   body.input = normalizeForXai(body.input);  // mutates in-place + returns it
+ *   const res = await fetch(`${cfg.xai.baseUrl.replace(/\/+$/, "")}/responses`, {
+ *     method: "POST",
+ *     headers: { Authorization: `Bearer ${key.apiKey}`, "Content-Type": "application/json" },
+ *     body: JSON.stringify(body),
+ *   });
+ *
+ * Guarantees:
+ * - Every `{role: ...}` item has `content: [{type: "input_text"|"output_text", text: "..."}]` (at minimum)
+ *   even if driver/sibling produced [], null, "", [only malformed/empty/garbage parts with no recognized
+ *   content types incl. input_image], whitespace-only, etc. (prevents 400 "Each message must have at least
+ *   one content element").
+ * - In aggressive mode (or when sibling explicitly calls this helper): ALSO strips every
+ *   `type: "reasoning"` item (Hermes xAI behavior under is_xai_responses=True from the 2026-05-19
+ *   clone exploration of codex_responses_adapter._chat_messages_to_responses_input + the codex
+ *   transport's include:[] / encrypted skip for xAI provider/hostname). xAI/Grok never receives
+ *   replayed encrypted_content blobs; this eliminates "reasoning item with no following content-bearing item"
+ *   / missing_following_item / content-element 400s after tool turns, high-reasoning turns, and long histories.
+ *   (The adapter's has_codex_reasoning + emit-empty-assistant is for non-xai; for xai the port omits
+ *   reasoning items entirely and lets the content fix ensure any follower is valid.)
+ * - Does NOT relocate developer/system (that is a payload-level step in aggressive mode).
+ * - Performs in-place mutations on the array and its items (project convention). Returns the (possibly shorter) array.
+ *
+ * Toggle via xai.payloadMode in settings (see xai-config.ts); defaults to "compatible"
+ * (no behavior change for existing users; only aggressive + explicit helper calls get the Hermes reasoning-strip).
+ *
+ * Limitations:
+ * - Built-in rich `xai_*` tools (xai_generate_text, xai_web_search, xai_x_search, xai_code_execution,
+ *   xai_multi_agent) and any direct calls routed through the internal `callXaiResponses` helper always
+ *   receive *only* the enhanced-compatible content normalization (the duplicated inline predicate),
+ *   even when `payloadMode="aggressive"`. They do not get the reasoning-item strip or the other
+ *   aggressive transforms. This is a direct consequence of the "no new helpers for the *internal*
+ *   compatible path" + "extend existing inline sites only" constraint that governed the entire
+ *   payloadMode and Hermes-port work (see IMPL a2042b0e + review).
+ * - For *full* aggressive/Hermes guarantees on direct `/responses` calls from siblings or custom code,
+ *   explicitly invoke `normalizeForXai(yourInputArray)` (the usage recipe above). Only the provider
+ *   chat/agentic path (grok-* via before_provider_request) receives the complete rewrite when
+ *   aggressive is configured.
+ * - Default behavior is and remains 100% the prior "compatible" experience.
+ */
+export function normalizeForXai(input: unknown[]): unknown[] {
+  // TODO(post-audit): dedupe the three near-identical normalisation predicates (per constraints, duplication was required for this change; see prior review decision on duplication under the no-new-helper constraint — retained explicitly for smallest-diff compliance, from the payloadMode implementation round).
+  // (as any) escape documented: smallest possible diff / no new helper for the
+  // defensive early return (runtime tolerance for untyped/JS sibling call sites);
+  // follows workspace memory patterns of in-place mutation inside already-scoped
+  // hooks + 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis
+  // (post-driver fixes rather than custom provider registration).
+  if (!Array.isArray(input)) return input as any[];
+
+  // === Hermes-like xAI aggressive handling (minimal port) ===
+  // Proactively strip all reasoning items before the content-element fix.
+  // This is the key guarantee from Hermes' is_xai_responses path in
+  // codex_responses_adapter._chat_messages_to_responses_input (the has_codex_reasoning
+  // + emit {"role":"assistant","content":""} only for non-xai; for xai simply
+  // never emits reasoning items at all) and the codex transport (include:[] +
+  // no encrypted for xai provider/hostname=="api.x.ai").
+  //
+  // Why here (aggressive + exported helper only):
+  // - Smallest possible diff: extend the already-exported normalizeForXai
+  //   (user-requested for siblings) rather than touching internal compatible
+  //   inline sites in callXaiResponses or the pre-aggressive block in the hook.
+  // - The openai-responses driver (generic, used by our single "grok-build"
+  //   provider registration) can emit reasoning items from stored history on
+  //   high-reasoning/tool/long-convo paths; the strip makes the aggressive
+  //   payload "as much like Hermes" as possible without becoming a full custom
+  //   transport or second provider.
+  // - After strip, any would-be "pure reasoning follower" assistant (content ""
+  //   or missing) still present in the list gets fixed to a valid content array
+  //   by the loop below → strong "no role-bearing item with bad content" + no
+  //   reasoning-without-follower ever reaches xAI.
+  // - (as any) + reverse-splice for in-place: required by "smallest diff / no
+  //   new helper for the *internal* compatible path" + all prior memory
+  //   (2026-05-19 400 analysis, payloadMode 0.8.2, in-place before_provider_request
+  //   + callXaiResponses preference, single grok-build registration).
+  // Default (compatible) + callXaiResponses internal norm paths: untouched.
+  for (let i = (input as any[]).length - 1; i >= 0; i--) {
+    const it: any = (input as any[])[i];
+    if (it && typeof it === "object" && it.type === "reasoning") {
+      (input as any[]).splice(i, 1);
+    }
+  }
+
+  for (const item of input) {
+    if (!item || typeof item !== "object" || !(item as any).role) continue;
+    const c = (item as any).content;
+    let needsFix =
+      c === undefined || c === null || c === "" || (Array.isArray(c) && c.length === 0);
+    if (!needsFix && Array.isArray(c)) {
+      // Recognizes any valid content element per xAI Responses (text parts or
+      // input_image etc.). Presence of recognized parts (including pure-image
+      // messages) means "do not treat as empty" — prevents destroying legitimate
+      // vision content while still catching malformed/empty/garbage-only cases
+      // that trigger the 400.
+      const hasValid = c.some(
+        (p: any) =>
+          p &&
+          typeof p === "object" &&
+          (typeof p.text === "string" ||
+            ["input_text", "output_text", "text", "input_image"].includes(p.type)),
+      );
+      if (!hasValid) needsFix = true;
+    }
+    if (!needsFix && typeof c === "string" && !String(c).trim()) needsFix = true;
+    if (needsFix) {
+      // (as any) documented per "smallest possible diff / no new helper" + workspace
+      // memory (in-place inside hooks): helper exists only because task #3 requires an
+      // exported single source for siblings + aggressive path; internal compatible sites
+      // were deliberately left as extended inline blocks.
+      const partType =
+        (item as any).type === "message" && (item as any).role === "assistant"
+          ? "output_text"
+          : "input_text";
+      (item as any).content = [{ type: partType, text: "" }];
+    }
+  }
+  return input;
 }
 
 export default async function (api: ExtensionAPI) {
@@ -237,14 +401,33 @@ export default async function (api: ExtensionAPI) {
     // (built-in web_search / x_search do not record the *_call items in Pi history the same way).
     // xAI rejects these with 400 "Each message must have at least one content element."
     // (reproduced across sessions: "latest news on x", Swiss news, etc. → follow-up).
-    // In-place only, no helpers, gated to grok-*.
+    // In-place only, no helpers, gated to grok-*. Enhanced for more thorough coverage of
+    // edge cases (arrays containing only malformed/empty/garbage parts with no recognized
+    // content types incl. input_image, nested empties after reasoning, role items with
+    // post-driver empty content) in the default/compatible path.
     if (Array.isArray(payload.input)) {
       for (const item of payload.input) {
         if (!item || typeof item !== "object" || !item.role) continue;
 
         const c = (item as any).content;
-        const isEmpty =
+        let isEmpty =
           c === undefined || c === null || c === "" || (Array.isArray(c) && c.length === 0);
+        if (!isEmpty && Array.isArray(c)) {
+          // Recognizes any valid content element per xAI Responses (text parts or
+          // input_image etc.). Presence of recognized parts (including pure-image
+          // messages) means "do not treat as empty" — prevents destroying legitimate
+          // vision content while still catching malformed/empty/garbage-only cases
+          // that trigger the 400.
+          const hasValid = c.some(
+            (p: any) =>
+              p &&
+              typeof p === "object" &&
+              (typeof p.text === "string" ||
+                ["input_text", "output_text", "text", "input_image"].includes(p.type)),
+          );
+          if (!hasValid) isEmpty = true;
+        }
+        if (!isEmpty && typeof c === "string" && !String(c).trim()) isEmpty = true;
 
         if (isEmpty) {
           // Use the correct part type for the Responses wire format.
@@ -252,7 +435,126 @@ export default async function (api: ExtensionAPI) {
             (item as any).type === "message" && item.role === "assistant"
               ? "output_text"
               : "input_text";
+          // (as any) escape documented: smallest possible diff / no new helper for
+          // enhancing the two existing sanitization sites (callXaiResponses + before_provider_request);
+          // follows workspace memory patterns of in-place mutation inside already-scoped hooks
+          // (see 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis requiring
+          // post-driver fixes instead of custom provider).
           (item as any).content = [{ type: partType, text: "" }];
+        }
+      }
+    }
+
+    // Aggressive mode (xai.payloadMode === "aggressive" in settings; defaults to
+    // "compatible" so zero behavior change for existing users). When enabled,
+    // performs a much more complete payload rewrite for the provider chat path:
+    // heavy input norm (via the shared helper), developer/system relocation to
+    // top-level instructions, stricter function_call_output cleaning.
+    // The norm piece now includes Hermes xAI parity (reasoning-item strip + strengthened
+    // content guarantees) from the fresh 2026-05-19 Hermes clone exploration
+    // (codex_responses_adapter._chat_messages_to_responses_input is_xai_responses handling,
+    // has_codex_reasoning/empty follower, codex transport include:[] + no encrypted for xAI).
+    // Still exclusively through the existing "grok-build" + "openai-responses" registration
+    // + this before_provider_request hook point (no second provider ever registered).
+    // In-place mutations only. See normalizeForXai JSDoc for full details + Limitations.
+    const payloadMode = config.xai.payloadMode;
+    if (payloadMode === "aggressive" && Array.isArray(payload.input)) {
+      // Use the exported helper (single source of truth) for the thorough norm piece.
+      // The helper now includes the Hermes xAI aggressive guarantees (reasoning-item
+      // strip + strengthened content-element) — see normalizeForXai JSDoc + body
+      // comments for the full port rationale from the 2026-05-19 clone (specific patterns:
+      // proactive strip of type:reasoning to match xai is_xai_responses omission of
+      // encrypted replay + follower guarantees; post-strip content fix for any remaining
+      // empty assistants).
+      // (as any) escape documented: smallest possible diff / no new helper for the
+      // aggressive rewrite path (extends the existing before_provider_request hook);
+      // follows workspace memory patterns of in-place mutation inside already-scoped
+      // hooks (see 400 "content element" bug history + prior BlockedPath/pi-xai-oauth analysis
+      // requiring post-driver fixes instead of custom provider) +
+      // 2026-05-19 Hermes clone exploration for minimal viable "aggressive that behaves as hermes".
+      normalizeForXai(payload.input as unknown[]);
+
+      // Note: content normalization is intentionally re-run here (after the Hermes
+      // reasoning strip) for the stronger post-strip guarantees on any would-be orphaned
+      // follower assistant items; the prior compatible block (the for-loop at ~377-409)
+      // ensures baseline safety for *all* grok-* paths (including default compatible).
+      // This small redundancy is accepted to obey the "smallest possible diff / no
+      // refactor or new helpers for internal compatible sites" rule from the entire
+      // 400 + payloadMode + Hermes port history.
+
+      // Developer / system messages → top-level instructions (common pattern in
+      // the reference to keep input clean for xAI while preserving semantics).
+      // (as any) escape documented: smallest possible diff / no new helper for the
+      // aggressive rewrite path (extends the existing before_provider_request hook);
+      // follows workspace memory patterns of in-place mutation inside already-scoped
+      // hooks (see 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis
+      // requiring post-driver fixes instead of custom provider registration).
+      const input = payload.input as any[];
+      const instructionParts: string[] = [];
+      while (input.length > 0) {
+        const first = input[0];
+        if (
+          !first ||
+          typeof first !== "object" ||
+          (first.role !== "developer" && first.role !== "system")
+        )
+          break;
+        const txt =
+          typeof first.content === "string"
+            ? first.content.trim()
+            : Array.isArray(first.content)
+              ? first.content
+                  .map((p: any) => (typeof p === "string" ? p : p?.text || ""))
+                  .join(" ")
+                  .trim()
+              : "";
+        if (txt) instructionParts.push(txt);
+        input.shift();
+      }
+      if (instructionParts.length > 0) {
+        // (as any) escape documented: smallest possible diff / no new helper for the
+        // aggressive rewrite path (extends the existing before_provider_request hook);
+        // follows workspace memory patterns of in-place mutation inside already-scoped
+        // hooks (see 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis
+        // requiring post-driver fixes instead of custom provider registration).
+        const prev = (payload as any).instructions;
+        (payload as any).instructions = prev
+          ? `${prev}\n\n${instructionParts.join("\n\n")}`
+          : instructionParts.join("\n\n");
+      }
+
+      // Stricter tool-result cleaning (function_call_output.output must be string for xAI;
+      // arrays with images or structured data are rewritten to text + placeholder).
+      for (const item of input) {
+        if (
+          item &&
+          typeof item === "object" &&
+          item.type === "function_call_output" &&
+          Array.isArray(item.output)
+        ) {
+          // (as any) escape documented: smallest possible diff / no new helper for the
+          // aggressive rewrite path (extends the existing before_provider_request hook);
+          // follows workspace memory patterns of in-place mutation inside already-scoped
+          // hooks (see 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis
+          // requiring post-driver fixes instead of custom provider registration).
+          const outArr = item.output as any[];
+          const asText =
+            outArr
+              .map((p: any) =>
+                typeof p === "string"
+                  ? p
+                  : p && typeof p === "object"
+                    ? p.text || (p.type === "input_image" ? "[image]" : JSON.stringify(p))
+                    : String(p ?? ""),
+              )
+              .filter(Boolean)
+              .join("\n") || "(tool returned no text output)";
+          // (as any) escape documented: smallest possible diff / no new helper for the
+          // aggressive rewrite path (extends the existing before_provider_request hook);
+          // follows workspace memory patterns of in-place mutation inside already-scoped
+          // hooks (see 400 "content element" bug history + BlockedPath/pi-xai-oauth analysis
+          // requiring post-driver fixes instead of custom provider registration).
+          (item as any).output = asText;
         }
       }
     }

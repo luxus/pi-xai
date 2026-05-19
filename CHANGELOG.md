@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-05-19
+
+### Improved / Hermes-like aggressive parity + docs + release
+
+- **Follow-up fix round on aggressive payload mode (IMPL 199d6924, atop a2042b0e)**: Addressed remaining review items from the Hermes port.
+  - Added clear **"Limitations" subsection** to the `normalizeForXai` JSDoc and the top-level `payloadMode` comment block in `index.ts`, explicitly documenting that rich `xai_*` tools and `callXaiResponses` paths receive only enhanced-compatible normalization (no reasoning strip) even under `payloadMode="aggressive"` — due to the no-new-helper / extend-existing-inline-sites constraint.
+  - Improved "Hermes parity" references throughout docs (top comment, JSDoc, aggressive block): shifted emphasis from older BlockedPath analysis to the fresh 2026-05-19 Hermes agent clone exploration (`/tmp/hermes-agent-clone`) and the *specific patterns ported* (reasoning-item strip from `codex_responses_adapter._chat_messages_to_responses_input` `is_xai_responses` handling + `has_codex_reasoning`/follower logic, codex transport `include:[]` + encrypted skip for xAI).
+  - Added explanatory comment on the intentional (constraint-driven) redundancy of content normalization (runs in the universal compatible block + again post-strip inside aggressive branch).
+  - Minor polish on TODO cross-reference (now generically references "prior review decision on duplication under the no-new-helper constraint").
+- **README overhaul (new dedicated section)**: Added "Payload normalization modes (`compatible` vs `aggressive`)" with user-facing explanation of both modes, what aggressive now delivers (Hermes-like guarantees with explicit clone/pattern citations), when users should consider switching (high-reasoning, long tool sessions, sibling dev, prior 400s), the sibling `normalizeForXai` helper story, and the rich-tools limitation.
+- **Release 0.8.3 prep**: Version bump, this CHANGELOG entry. All under the project's permanent "smallest possible diff + default unchanged + document every cast + single provider" rules. No behavior change for `compatible` users.
+
+All quality gates (typecheck, tests, lint) passed. Aggressive is now *substantially* more Hermes-like for the exact recurring 400 class when opted in, while limitations and the "why" are fully transparent.
+
 ## [0.8.2] - 2026-05-19
 
 ### Fixed

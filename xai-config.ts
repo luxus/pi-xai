@@ -59,6 +59,7 @@ export interface ResolvedXaiConfig {
   xai: {
     baseUrl: string;
     text: JsonRecord;
+    payloadMode: "compatible" | "aggressive";
   };
   loadedFiles: string[];
 }
@@ -78,6 +79,8 @@ export function resolveXaiConfig(): ResolvedXaiConfig {
     xai: {
       baseUrl: getString(mergedXai, "baseUrl") || XAI_API_BASE,
       text: getNamespace(mergedXai, "text"),
+      payloadMode:
+        getString(mergedXai, "payloadMode") === "aggressive" ? "aggressive" : "compatible",
     },
     loadedFiles,
   };
