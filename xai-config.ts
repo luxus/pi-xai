@@ -12,21 +12,8 @@ function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function mergeRecords(base: JsonRecord, override: JsonRecord): JsonRecord {
-  const merged: JsonRecord = { ...base };
-  for (const [key, value] of Object.entries(override)) {
-    const current = merged[key];
-    if (isRecord(current) && isRecord(value)) {
-      merged[key] = mergeRecords(current, value);
-    } else {
-      merged[key] = value;
-    }
-  }
-  return merged;
-}
-
-function readJsonRecord(filePath: string): JsonRecord | undefined {
-  if (!existsSync(filePath)) return undefined;
+function readJsonRecord(filePath: string): JsonRecord {
+  if (!existsSync(filePath)) return {};
   const raw = readFileSync(filePath, "utf8").trim();
   if (!raw) return {};
   try {
@@ -37,8 +24,7 @@ function readJsonRecord(filePath: string): JsonRecord | undefined {
   }
 }
 
-function getNamespace(root: JsonRecord | undefined, key: string): JsonRecord {
-  if (!root) return {};
+function getNamespace(root: JsonRecord, key: string): JsonRecord {
   const value = root[key];
   return isRecord(value) ? value : {};
 }
@@ -49,41 +35,50 @@ function getString(record: JsonRecord, key: string): string | undefined {
 }
 
 export function getPiSettingsPaths(): { user: string; project: string } {
-  return {
-    user: USER_PI_SETTINGS_PATH,
-    project: PROJECT_PI_SETTINGS_PATH,
-  };
+  return { user: USER_PI_SETTINGS_PATH, project: PROJECT_PI_SETTINGS_PATH };
 }
 
 export interface ResolvedXaiConfig {
   xai: {
     baseUrl: string;
     text: JsonRecord;
-    payloadMode: "compatible" | "aggressive";
   };
-  loadedFiles: string[];
 }
 
 export function resolveXaiConfig(): ResolvedXaiConfig {
-  const userSettings = readJsonRecord(USER_PI_SETTINGS_PATH);
-  const projectSettings = readJsonRecord(PROJECT_PI_SETTINGS_PATH);
-  const loadedFiles = [
-    ...(userSettings ? [USER_PI_SETTINGS_PATH] : []),
-    ...(projectSettings ? [PROJECT_PI_SETTINGS_PATH] : []),
-  ];
-
-  const mergedSettings = mergeRecords(userSettings ?? {}, projectSettings ?? {});
-  const mergedXai = getNamespace(mergedSettings, "xai");
+  const user = readJsonRecord(USER_PI_SETTINGS_PATH);
+  const project = readJsonRecord(PROJECT_PI_SETTINGS_PATH);
+  const userXai = getNamespace(user, "xai");
+  const projectXai = getNamespace(project, "xai");
+  const mergedXai: JsonRecord = { ...userXai, ...projectXai };
+  const textUser = getNamespace(userXai, "text");
+  const textProject = getNamespace(projectXai, "text");
 
   return {
     xai: {
       baseUrl: getString(mergedXai, "baseUrl") || XAI_API_BASE,
-      text: getNamespace(mergedXai, "text"),
-      payloadMode:
-        getString(mergedXai, "payloadMode") === "aggressive" ? "aggressive" : "compatible",
+      text: { ...textUser, ...textProject },
     },
-    loadedFiles,
   };
+}
+
+const GROK_EFFORT_PREFIXES = ["grok-3-mini", "grok-4.20-multi-agent", "grok-4.3"] as const;
+
+export function grokModelId(model: string): string {
+  let name = (model || "").trim().toLowerCase();
+  if (name.includes("/")) name = name.split("/").pop()!;
+  return name;
+}
+
+export function grokSupportsReasoningEffort(model: string): boolean {
+  const name = grokModelId(model);
+  return name ? GROK_EFFORT_PREFIXES.some((p) => name.startsWith(p)) : false;
+}
+
+export function grokWantsEncryptedReasoningInclude(model: string): boolean {
+  const name = grokModelId(model);
+  if (!name || name.startsWith("grok-build")) return false;
+  return grokSupportsReasoningEffort(name) || name.includes("reasoning");
 }
 
 export function getAgenticConfig(config: ResolvedXaiConfig): {
@@ -102,8 +97,5 @@ export function getAgenticConfig(config: ResolvedXaiConfig): {
     return { enabled: true, tools };
   }
 
-  return {
-    enabled: true,
-    tools: ["web_search", "x_search", "code_interpreter"],
-  };
+  return { enabled: true, tools: ["web_search", "x_search", "code_interpreter"] };
 }

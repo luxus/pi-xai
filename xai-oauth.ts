@@ -1,11 +1,11 @@
 /**
- * xAI Grok Build / Coding Plan OAuth support for the Pi extension.
+ * xAI Grok Build OAuth support for the Pi extension.
  *
  * `/login grok-build` supports two paths:
  *
  * 1. **Import existing `grok login`** (Recommended when available)
  *    - Uses tokens from the official Grok CLI (`~/.grok/auth.json`)
- *    - Guarantees you're using your actual Coding Plan / Grok Build subscription.
+ *    - Uses your SuperGrok / X subscription (Grok Build entitlement).
  *
  * 2. **Native Device Code Flow** (no grok binary required)
  *    - Pure native login using the same public client as the official CLI.
@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { createInterface } from "node:readline";
 
 // =============================================================================
 // Constants (match official Grok CLI / Hermes exactly)
@@ -32,15 +33,13 @@ export const XAI_OAUTH_DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code";
 export const XAI_OAUTH_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 export const XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 export const XAI_OAUTH_SCOPE = "openid profile email offline_access grok-cli:access api:access";
-export const XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 300; // 5 min
+export const XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 3600; // 1h — Hermes febdddb41 (6h tokens, refresh early)
 
 // PKCE / Web OAuth constants (browser redirect flow support)
 export const XAI_OAUTH_DISCOVERY_URL = `${XAI_OAUTH_ISSUER}/.well-known/openid-configuration`;
 export const XAI_OAUTH_REDIRECT_HOST = "127.0.0.1";
 export const XAI_OAUTH_REDIRECT_PORT = 56121;
 export const XAI_OAUTH_REDIRECT_PATH = "/callback";
-export const XAI_OAUTH_REFRESH_SKEW_MS = 2 * 60 * 1000; // 2 min (slightly tighter than device skew for web flow)
-
 export let GROK_CLI_AUTH_PATH = resolve(homedir(), ".grok", "auth.json");
 export const GROK_CLI_AUTH_CLIENT_ID = XAI_OAUTH_CLIENT_ID; // same client
 
@@ -247,7 +246,7 @@ function buildAuthorizeUrl(
   return `${discovery.authorization_endpoint}?${params.toString()}`;
 }
 
-function parseCallbackInput(input: string): CallbackResult | undefined {
+export function parseCallbackInput(input: string): CallbackResult | undefined {
   const trimmed = input.trim();
   if (!trimmed) return undefined;
 
@@ -306,11 +305,14 @@ async function exchangeXaiToken(
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
+    const entitlement = response.status === 403 && isXaiEntitlementError(text);
     throw new XaiAuthError(
-      `xAI token exchange failed (HTTP ${response.status}).${text ? ` Response: ${text}` : ""}`,
+      entitlement
+        ? `xAI subscription required.${text ? ` ${text.slice(0, 300)}` : ""}`
+        : `xAI token exchange failed (HTTP ${response.status}).${text ? ` Response: ${text}` : ""}`,
       {
-        reloginRequired: true,
-        code: "xai_token_exchange_failed",
+        reloginRequired: !entitlement,
+        code: entitlement ? "xai_entitlement" : "xai_token_exchange_failed",
       },
     );
   }
@@ -360,7 +362,43 @@ type CallbackResult = {
   state?: string;
   error?: string;
   error_description?: string;
+  manualPaste?: boolean;
 };
+
+// Hermes #29344: xAI 403s share permission-denied text for entitlement vs stale token
+export function isXaiStaleTokenError(text: string): boolean {
+  const h = text.toLowerCase();
+  return (
+    h.includes("[wke=unauthenticated:") || h.includes("oauth2 access token could not be validated")
+  );
+}
+
+export function isXaiEntitlementError(text: string): boolean {
+  const h = text.toLowerCase();
+  if (isXaiStaleTokenError(text)) return false;
+  if (h.includes("do not have an active grok subscription")) return true;
+  if (h.includes("out of available resources") && h.includes("grok")) return true;
+  if (h.includes("does not have permission") && h.includes("grok")) return true;
+  return false;
+}
+
+function attachStdinPasteCallback(onPaste: (result: CallbackResult) => void): () => void {
+  if (!process.stdin.isTTY) return () => {};
+  const rl = createInterface({ input: process.stdin, terminal: true });
+  const onLine = (line: string) => {
+    const parsed = parseCallbackInput(line);
+    if (parsed?.code) {
+      parsed.manualPaste = true;
+      onPaste(parsed);
+      rl.close();
+    }
+  };
+  rl.on("line", onLine);
+  return () => {
+    rl.off("line", onLine);
+    rl.close();
+  };
+}
 
 // Simple per-provider in-memory lock (Map of key -> Promise) to serialize
 // concurrent refreshXaiToken calls for the same entry. xAI refresh tokens
@@ -446,10 +484,17 @@ async function refreshXaiAccessToken(refreshToken: string): Promise<{
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new XaiAuthError(`xAI token refresh failed (${res.status}): ${text}`, {
-      reloginRequired: res.status === 400 || res.status === 401,
-      code: "xai_refresh_failed",
-    });
+    const entitlement = res.status === 403 && isXaiEntitlementError(text);
+    throw new XaiAuthError(
+      entitlement
+        ? `xAI subscription required.${text ? ` ${text.slice(0, 300)}` : ""}`
+        : `xAI token refresh failed (${res.status}): ${text}`,
+      {
+        reloginRequired:
+          !entitlement && (res.status === 400 || res.status === 401 || res.status === 403),
+        code: entitlement ? "xai_entitlement" : "xai_refresh_failed",
+      },
+    );
   }
 
   let data: any;
@@ -515,16 +560,6 @@ export function readGrokCliAuth():
         accessToken: String(legacyAccess),
         email: undefined,
         source: `grok-cli-legacy:${GROK_CLI_AUTH_PATH}`,
-      };
-    }
-
-    // Top-level fallbacks (very old or non-standard layouts)
-    const topLevelAccess = (parsed as any).access_token || (parsed as any).token;
-    if (topLevelAccess) {
-      return {
-        accessToken: String(topLevelAccess),
-        email: undefined,
-        source: `grok-cli-top:${GROK_CLI_AUTH_PATH}`,
       };
     }
   } catch {
@@ -676,7 +711,7 @@ async function performNativeDeviceCodeLogin(
   callbacks.onAuth({
     url,
     instructions:
-      `xAI Grok Build / Coding Plan — Native Login (no grok binary required)\n\n` +
+      `xAI Grok Build — Native Login (no grok binary required)\n\n` +
       `Open this URL in your browser:\n${url}\n\n` +
       `If asked, enter this code:  ${userCode}\n\n` +
       `Approve the request, and login will complete automatically.`,
@@ -743,10 +778,14 @@ async function performXaiPkceLogin(callbacks: OAuthLoginCallbacks): Promise<OAut
     callbacks.onAuth({
       url: authorizeUrl,
       instructions:
-        "If the automatic open uses the wrong browser/profile, copy the URL and paste the full redirect URL (or just the ?code=... part) into the field below (or open it manually in your preferred browser).",
+        "If the automatic open uses the wrong browser/profile, copy the URL and open it manually. " +
+        "If xAI shows a Grok Build code on-page instead of redirecting, paste the bare code, " +
+        "the full redirect URL, or ?code=... into the field below (or your terminal while waiting).",
     });
 
     callbacks.onProgress?.(`Waiting for xAI OAuth callback on ${callbackServer.redirectUri}...`);
+
+    const detachStdin = attachStdinPasteCallback((r) => callbackServer.resolveCallback(r));
 
     const manualCodePromise = callbacks.onManualCodeInput?.();
     if (manualCodePromise) {
@@ -762,7 +801,12 @@ async function performXaiPkceLogin(callbacks: OAuthLoginCallbacks): Promise<OAut
         });
     }
 
-    const callback = await callbackServer.waitForCallback(callbacks.signal);
+    let callback: CallbackResult;
+    try {
+      callback = await callbackServer.waitForCallback(callbacks.signal);
+    } finally {
+      detachStdin();
+    }
     if (callback.error) {
       throw new XaiAuthError(
         `xAI authorization failed: ${callback.error_description || callback.error}`,
@@ -772,7 +816,9 @@ async function performXaiPkceLogin(callbacks: OAuthLoginCallbacks): Promise<OAut
         },
       );
     }
-    if (callback.state && callback.state !== state) {
+    // Hermes #26923 / 1c055a4c5: bare-code paste has no state; PKCE verifier still binds exchange
+    const callbackState = callback.state ?? state;
+    if (callbackState !== state) {
       throw new XaiAuthError("xAI authorization failed: state mismatch", {
         reloginRequired: true,
         code: "xai_pkce_state_mismatch",
@@ -871,12 +917,11 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
       const choice = await cb.onSelect!({
         message:
           `Found existing Grok CLI login${existing.email ? ` for ${existing.email}` : ""}.\n\n` +
-          `How do you want to authenticate for Grok Build / Coding Plan?`,
+          `How do you want to authenticate for Grok Build?`,
         options: [
           {
             id: "import",
-            label:
-              "Import existing `grok login` (Recommended — guaranteed to use your Coding Plan subscription)",
+            label: "Import existing `grok login` (recommended)",
           },
           {
             id: "native",
@@ -979,13 +1024,13 @@ export async function getEffectiveXaiApiKey(options?: {
   const piAuth = readPiAuthFile();
 
   // ------------------------------------------------------------------
-  // Grok Build / Coding Plan preferred
+  // Grok Build OAuth preferred
   // We prefer a proper `grok-build` OAuth entry (from `/login grok-build`)
   // or an auto-detected token from the official grok CLI.
   // Plain XAI_API_KEY is only used as a last resort (often only valid for voice).
   // ------------------------------------------------------------------
 
-  // 1. Explicit "grok-build" entry in Pi auth (proper OAuth from Grok Build subscription)
+  // 1. Explicit "grok-build" entry in Pi auth (OAuth from SuperGrok / X subscription)
   const grokBuildEntry = piAuth?.["grok-build"];
   if (grokBuildEntry) {
     if (

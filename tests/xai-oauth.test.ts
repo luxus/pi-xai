@@ -22,6 +22,7 @@ import {
   XAI_OAUTH_TOKEN_URL,
   XAI_OAUTH_DEVICE_CODE_URL,
   XAI_OAUTH_SCOPE,
+  parseCallbackInput,
 } from "../xai-oauth.ts";
 
 const ORIGINAL_ENV_KEY = process.env.XAI_API_KEY;
@@ -84,7 +85,7 @@ describe("xai-oauth (9 essential tests — Hermes parity)", () => {
     expect(XAI_OAUTH_CLIENT_ID).toBe("b1a00492-073a-47ea-816f-4c329264a828");
     expect(XAI_OAUTH_TOKEN_URL).toContain("auth.x.ai/oauth2/token");
     expect(XAI_OAUTH_DEVICE_CODE_URL).toContain("device/code");
-    expect(XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS).toBe(300);
+    expect(XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS).toBe(3600);
     expect(XAI_OAUTH_SCOPE).toContain("grok-cli:access");
   });
 
@@ -141,6 +142,11 @@ describe("xai-oauth (9 essential tests — Hermes parity)", () => {
     process.env.XAI_API_KEY = "env_key_123";
     const r = await getEffectiveXaiApiKey();
     expect(r).toEqual({ apiKey: "env_key_123", source: "env:XAI_API_KEY" });
+  });
+
+  test("parseCallbackInput accepts bare Grok Build authorization code", () => {
+    const code = "A".repeat(24);
+    expect(parseCallbackInput(code)).toEqual({ code });
   });
 
   test("autoImportGrokCliIfNeeded returns false when no grok cli present", async () => {

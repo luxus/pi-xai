@@ -34,22 +34,26 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "verify:deps": "node scripts/hoist-patched-deps.mjs && node scripts/verify-patched-deps.mjs",
     "test:watch": "vitest",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "node scripts/hoist-patched-deps.mjs"
   },
   "dependencies": {
-    "typebox": "^1.1.24"
+    "typebox": "^1.2.16"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.75.0",
-    "@earendil-works/pi-coding-agent": "^0.75.0",
-    "@typescript/native-preview": "^7.0.0-dev.20260516.1",
+    "@earendil-works/pi-ai": "^0.79.7",
+    "@earendil-works/pi-coding-agent": "^0.79.7",
+    "@typescript/native-preview": "^7.0.0-dev.20260618.1",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.5",
-    "oxfmt": "^0.50.0",
-    "oxlint": "^1.65.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "lint-staged": "^17.0.7",
+    "oxfmt": "^0.55.0",
+    "oxlint": "^1.70.0",
+    "protobufjs": "7.6.4",
+    "undici": "8.5.0",
+    "vitest": "^4.1.9",
+    "ws": "8.21.0"
   },
   "lint-staged": {
     "**/*.ts": [
@@ -57,6 +61,16 @@
       "oxlint",
       "sh -c 'tsgo --noEmit --project tsconfig.json'"
     ]
+  },
+  "overrides": {
+    "protobufjs": "7.6.4",
+    "undici": "8.5.0",
+    "ws": "8.21.0",
+    "@earendil-works/pi-coding-agent": {
+      "protobufjs": "7.6.4",
+      "undici": "8.5.0",
+      "ws": "8.21.0"
+    }
   },
   "engines": {
     "node": ">=18"
