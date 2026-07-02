@@ -36,7 +36,7 @@
     "test": "vitest run",
     "verify:deps": "node scripts/hoist-patched-deps.mjs && node scripts/verify-patched-deps.mjs",
     "test:watch": "vitest",
-    "prepare": "husky"
+    "prepare": "node -e \"const fs=require('fs'),cp=require('child_process');if(fs.existsSync('node_modules/husky'))cp.execFileSync('node',['node_modules/husky/bin.js'],{stdio:'inherit'})\""
   },
   "dependencies": {
     "typebox": "^1.2.16"
