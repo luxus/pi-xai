@@ -1,6 +1,6 @@
 {
   "name": "pi-xai",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Pi extension for xAI text generation via Responses API — reasoning, multi-agent, structured outputs, tools",
   "keywords": [
     "coding-plan",
@@ -36,8 +36,7 @@
     "test": "vitest run",
     "verify:deps": "node scripts/hoist-patched-deps.mjs && node scripts/verify-patched-deps.mjs",
     "test:watch": "vitest",
-    "prepare": "husky",
-    "postinstall": "node scripts/hoist-patched-deps.mjs"
+    "prepare": "husky"
   },
   "dependencies": {
     "typebox": "^1.2.16"

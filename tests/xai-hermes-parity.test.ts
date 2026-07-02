@@ -72,4 +72,17 @@ describe("Hermes xAI parity", () => {
       { type: "x_search" },
     ]);
   });
+
+  test("mergeXaiTools dedupes duplicate built-in tools by type", () => {
+    const merged = mergeXaiTools(
+      [{ type: "function", name: "bash" }, { type: "web_search" }, { type: "x_search" }],
+      [{ type: "web_search" }, { type: "x_search" }, { type: "code_interpreter" }],
+    );
+    expect(merged).toEqual([
+      { type: "function", name: "bash" },
+      { type: "web_search" },
+      { type: "x_search" },
+      { type: "code_interpreter" },
+    ]);
+  });
 });

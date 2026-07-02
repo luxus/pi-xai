@@ -275,24 +275,26 @@ export function stripSlashEnums(tools: unknown[]): void {
   for (const tool of tools) walk(tool);
 }
 
-// ponytail: only web_search collision handled; upgrade if more native/client clashes
+const XAI_BUILTIN_TOOL_TYPES = new Set([
+  "web_search",
+  "x_search",
+  "code_interpreter",
+  "collections_search",
+]);
+
 export function mergeXaiTools(existing: unknown[], builtins: unknown[]): unknown[] {
-  const filtered = existing.filter(
-    (t) =>
-      !(
-        t &&
-        typeof t === "object" &&
-        (t as { type?: string; name?: string }).type === "function" &&
-        (t as { name?: string }).name === "web_search"
-      ),
-  );
-  const merged = [...filtered, ...builtins];
-  let hasNativeWebSearch = false;
-  return merged.filter((t) => {
-    if (t && typeof t === "object" && (t as { type?: string }).type === "web_search") {
-      if (hasNativeWebSearch) return false;
-      hasNativeWebSearch = true;
-    }
+  const filtered = existing.filter((t) => {
+    if (!t || typeof t !== "object") return true;
+    const rec = t as { type?: string; name?: string };
+    return !(rec.type === "function" && rec.name && XAI_BUILTIN_TOOL_TYPES.has(rec.name));
+  });
+  const seen = new Set<string>();
+  return [...filtered, ...builtins].filter((t) => {
+    if (!t || typeof t !== "object") return true;
+    const key = (t as { name?: string; type?: string }).name ?? (t as { type?: string }).type;
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

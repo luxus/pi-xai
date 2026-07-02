@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-07-02
+
+### Fixed
+
+- **#4 — npm install no longer fails on missing `postinstall` script.** Removed `postinstall` from the published package; `scripts/hoist-patched-deps.mjs` is dev-only (`npm run verify:deps`) and was never included in the npm `files` array.
+- **#3 — agentic mode no longer sends duplicate built-in tools.** `mergeXaiTools` now dedupes all xAI built-ins (`web_search`, `x_search`, `code_interpreter`, `collections_search`) by `name`/`type` and drops client function tools that shadow those names.
+- **#2 — `grok-build-0.1` reports 256k context window.** Model registry uses `contextWindow: 256_000` so Pi's usage display and auto-compaction match the real Grok Build budget.
+
 ## [0.8.5] - 2026-05-21
 
 ### Fixed — client-side tools (bash, edit, read, find…) now visible to Grok
