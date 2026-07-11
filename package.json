@@ -87,6 +87,7 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/luxus/pi-xai/main/assets/pi-xai-logo.png"
   }
 }
