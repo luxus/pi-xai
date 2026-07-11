@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-07-11
+
+### Changed
+
+- **Project logo** — Pi + xAI + Grok marks on starfield (`assets/pi-xai-logo.png`).
+- **Default inference endpoint is now the Grok CLI proxy** — `https://cli-chat-proxy.grok.com/v1` (was `api.x.ai/v1`). Subscription models (Composer, Build, 4.20) track the CLI catalog more closely. Override with `xai.baseUrl: "https://api.x.ai/v1"` for public API key traffic.
+- **CLI client headers** on every proxy request (`User-Agent`, `x-grok-client-version` 0.2.91, `x-xai-token-auth`, `x-grok-model-override`, optional `x-grok-conv-id`) to pass the proxy version gate (HTTP 426).
+- **Vision default is Composer-only** — routes `read`/`Read` images through `grok-4.5` when the active model is Composer. Other text-only models are **not** auto-routed. `/xai-vision:on` = all text-only; `/xai-vision:composer` = default; `/xai-vision:off` = off.
+- **Model catalog** — `grok-build` (512k, was `grok-build-0.1`/256k), re-added `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, `grok-4.20-multi-agent-0309`, **per-model costs** (no more flat $3/$15).
+- Peer deps require **pi ≥ 0.80.0** (`@earendil-works/pi-ai` / `pi-coding-agent`).
+
+### Added
+
+- **Image path → data URI** in provider payload (`xai-images.ts`) — local `.png`/`.jpg` within workspace, `image_url` → `input_image`, and image-bearing `function_call_output` rewrite.
+- **GitHub Actions CI** (typecheck, lint, test).
+- Custom `streamSimple` path for CLI headers on tool-continuation turns.
+
+### Fixed
+
+- Strip `reasoning.encrypted_content` include on the CLI proxy (proxy rejects it); still requested on public `api.x.ai`.
+
+## [0.14.0] - 2026-07-11
+
+### Added
+
+- **Optional vision routing for text-only models** — when enabled (`/xai-vision:on`), images from pi `read` / `Read` are described via **`grok-4.5`** (default describer; `grok-4.3` also allowed) and replaced with text so non-vision models can reason over them. Among Grok models only **Composer** is text-only; 4.5/4.3 have native vision. Also applies to other providers’ text-only models while pi-xai is loaded. Cache in `~/.pi/xai-vision-cache.json`. Config: `~/.pi/xai-vision.json`. Commands: `/xai-vision:status`, `/xai-vision:on`, `/xai-vision:off`, `/xai-vision:cache-clear`. **Off by default.** Inspired by [kenryu42/pi-grok-cli](https://github.com/kenryu42/pi-grok-cli) — thanks @kenryu42.
+
+### Changed
+
+- **`grok-composer-2.5-fast` is text-only** in the model registry (`input: ["text"]`). Matches Grok CLI catalog; enables optional vision routing when active.
+
+## [0.13.2] - 2026-07-11
+
+### Added
+
+- **`prompt_cache_key` on custom Responses tools** — `xai_generate_text`, `xai_x_search`, `xai_multi_agent`, and other `callXaiResponses` paths now set xAI’s recommended session-affinity key (Pi session id, max 64 chars). Main chat already got this from Pi’s `openai-responses` driver; the hook re-asserts it if missing. Improves prompt-cache hit rates across multi-turn tool calls.
+
+## [0.13.1] - 2026-07-11
+
+### Added
+
+- **`xai.text.webSearch` mode** — `native` (default) \| `web-access` \| `both`.
+  - `native`: xAI agentic `web_search` only; do not activate Cursor `WebSearch` or suppress client search — other models can keep using pi-web-access.
+  - `web-access`: replace native agentic `web_search` with pi-web-access `WebSearch` on `grok-build` (requires package install).
+  - `both`: keep native agentic and activate `WebSearch`.
+  - Leaving `grok-build` restores client `web_search` when it was suppressed (multi-model friendly).
+
+### Changed
+
+- Optional WebSearch no longer auto-activates merely because pi-web-access is installed; mode must be `web-access` or `both`.
+
+## [0.13.0] - 2026-07-11
+
+### Added
+
+- **Optional Cursor `WebSearch` via pi-web-access** — if `pi install npm:pi-web-access` is present, register capital `WebSearch` on `grok-build` and delegate to that package’s `web_search` (Perplexity/Exa/Gemini). Suppresses client tool name `web_search` while active so Composer calls `WebSearch`. **Does not** change xAI agentic server-side `web_search` injection. No-op without pi-web-access (default). Optional peerDependency only. Inspired by [kenryu42/pi-grok-cli](https://github.com/kenryu42/pi-grok-cli) — thanks @kenryu42.
+
+## [0.12.1] - 2026-07-11
+
+### Added
+
+- **Cursor/Composer search shims for `grok-build`** — capital `Grep` / `Glob` (wrap pi `grep` / `find`), auto-activate native `grep`+`find`, plus arg aliases (`glob_pattern`, `contents`/`file_path`, strip `replace_all` on edit). Fixes Composer first-try "Tool Grep/Glob not found" without a full Cursor toolkit. Inspired by [kenryu42/pi-grok-cli](https://github.com/kenryu42/pi-grok-cli) — thanks @kenryu42.
+
+## [0.12.0] - 2026-07-11
+
+### Added
+
+- **`/xai-usage` slash command** — Grok Build **monthly** credits + **weekly** limit % (from `cli-chat-proxy.grok.com/v1/billing` and `?format=credits`), next reset times, and link to https://grok.com/?_s=usage.
+
+## [0.11.0] - 2026-07-11
+
+### Changed
+
+- **`xai_multi_agent` is off by default.** Prefer Grok 4.5 + agentic built-ins for coding. The 4.20 multi-agent research tool remains available only when you set `xai.text.multiAgent: true` in `~/.pi/agent/settings.json` (or project settings).
+- Package description/keywords no longer advertise multi-agent as a primary feature.
+
 ## [0.10.0] - 2026-07-08
 
 ### Added

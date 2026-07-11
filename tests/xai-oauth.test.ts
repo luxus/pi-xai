@@ -14,6 +14,11 @@ import {
   refreshXaiToken,
   getEffectiveXaiApiKey,
   autoImportGrokCliIfNeeded,
+  formatGrokBuildBilling,
+  formatQuota,
+  fetchBillingUsage,
+  GROK_BUILD_BILLING_URL,
+  GROK_USAGE_PAGE_URL,
   __setTestGrokCliAuthPath,
   __setTestPiAuthPath,
   __resetTestPathsToDefaults,
@@ -152,5 +157,85 @@ describe("xai-oauth (9 essential tests — Hermes parity)", () => {
   test("autoImportGrokCliIfNeeded returns false when no grok cli present", async () => {
     const did = await autoImportGrokCliIfNeeded();
     expect(did).toBe(false);
+  });
+
+  test("formatQuota shows monthly + weekly + usage page link", () => {
+    const lines = formatQuota({
+      monthly: {
+        used: 13440,
+        monthlyLimit: 150000,
+        billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+      },
+      weekly: {
+        creditUsagePercent: 17,
+        billingPeriodEnd: "2026-07-16T19:56:43.095597+00:00",
+      },
+    });
+    const text = lines.join("\n");
+    expect(text).toContain("Monthly");
+    expect(text).toContain("13,440");
+    expect(text).toContain("150,000");
+    expect(text).toContain("9%");
+    expect(text).toContain("Weekly");
+    expect(text).toContain("17% used");
+    expect(text).toContain(GROK_USAGE_PAGE_URL);
+    expect(
+      formatGrokBuildBilling({
+        monthly: {
+          used: 13440,
+          monthlyLimit: 150000,
+          billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+        },
+      }),
+    ).toContain("Usage:");
+  });
+
+  test("fetchBillingUsage loads monthly then optional weekly", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          config: {
+            monthlyLimit: { val: 150000 },
+            used: { val: 15000 },
+            onDemandCap: { val: 0 },
+            billingPeriodStart: "2026-07-01T00:00:00+00:00",
+            billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          config: {
+            currentPeriod: {
+              type: "USAGE_PERIOD_TYPE_WEEKLY",
+              start: "2026-07-09T19:56:43.095597+00:00",
+              end: "2026-07-16T19:56:43.095597+00:00",
+            },
+            creditUsagePercent: 17.0,
+            billingPeriodEnd: "2026-07-16T19:56:43.095597+00:00",
+          },
+        }),
+      });
+    const b = await fetchBillingUsage("tok_test");
+    expect(b.monthly.used).toBe(15000);
+    expect(b.monthly.monthlyLimit).toBe(150000);
+    expect(b.weekly?.creditUsagePercent).toBe(17);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      GROK_BUILD_BILLING_URL,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer tok_test",
+          "x-xai-token-auth": "xai-grok-cli",
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${GROK_BUILD_BILLING_URL}?format=credits`,
+      expect.anything(),
+    );
   });
 });

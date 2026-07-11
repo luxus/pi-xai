@@ -3,17 +3,25 @@ import { Type } from "typebox";
 import {
   resolveXaiConfig,
   getAgenticConfig,
+  isMultiAgentToolEnabled,
   grokSupportsReasoningEffort,
   grokWantsEncryptedReasoningInclude,
   getPiSettingsPaths,
   type ResolvedXaiConfig,
 } from "./xai-config.ts";
+import { normalizeImageParts, rewriteFunctionCallOutputImages } from "./xai-images.ts";
 import { registerXaiProvider } from "./xai-provider.ts";
+import { registerGrokToolShims } from "./xai-tool-shims.ts";
+import { isGrokCliProxyBaseUrl, xaiRequestHeaders } from "./xai-stream.ts";
+import { registerXaiVision } from "./xai-vision.ts";
 import {
   getEffectiveXaiApiKey,
   autoImportGrokCliIfNeeded,
   isXaiEntitlementError,
   isXaiStaleTokenError,
+  fetchBillingUsage,
+  formatGrokBuildBilling,
+  GROK_USAGE_PAGE_URL,
 } from "./xai-oauth.ts";
 
 // Re-export credential helpers so sibling extensions (pi-xai-imagine, pi-xai-voice, etc.)
@@ -23,15 +31,39 @@ export {
   autoImportGrokCliIfNeeded,
   isXaiEntitlementError,
   isXaiStaleTokenError,
+  fetchBillingUsage,
+  fetchGrokBuildBilling,
+  formatQuota,
+  formatGrokBuildBilling,
+  GROK_USAGE_PAGE_URL,
+  GROK_BUILD_BILLING_URL,
+  type BillingUsage,
+  type MonthlyUsage,
+  type WeeklyUsage,
 } from "./xai-oauth.ts";
 export {
   resolveXaiConfig,
   getAgenticConfig,
+  isMultiAgentToolEnabled,
   grokSupportsReasoningEffort,
   grokWantsEncryptedReasoningInclude,
   getPiSettingsPaths,
+  XAI_API_BASE,
+  XAI_CLI_BASE,
   type ResolvedXaiConfig,
 } from "./xai-config.ts";
+export {
+  normalizeImageInput,
+  normalizeImageParts,
+  rewriteFunctionCallOutputImages,
+} from "./xai-images.ts";
+export {
+  GROK_CLI_VERSION,
+  grokCliModelHeaders,
+  isGrokCliProxyBaseUrl,
+  xaiRequestHeaders,
+  streamGrokCli,
+} from "./xai-stream.ts";
 
 async function createRuntime(): Promise<{ apiKey: string; config: ResolvedXaiConfig }> {
   // Credential resolution now fully delegated to xai-oauth (grok-build OAuth priority,
@@ -138,19 +170,71 @@ function textResult(text: string): {
   return { content: [{ type: "text" as const, text }], details: text };
 }
 
+/** Match Pi/openai-responses + xAI prompt cache key length limit. */
+export const XAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
+
+/** Clamp a prompt_cache_key the same way Pi core does (max 64 code points). */
+export function clampXaiPromptCacheKey(key: string | undefined | null): string | undefined {
+  if (key == null) return undefined;
+  const trimmed = String(key).trim();
+  if (!trimmed) return undefined;
+  const chars = Array.from(trimmed);
+  if (chars.length <= XAI_PROMPT_CACHE_KEY_MAX_LENGTH) return trimmed;
+  return chars.slice(0, XAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("");
+}
+
+/**
+ * Ensure Responses body has prompt_cache_key for server affinity / cache hits.
+ * xAI recommends this on Responses; Chat Completions uses x-grok-conv-id instead.
+ * Prefers an existing non-empty body key; otherwise uses the Pi session id.
+ */
+export function ensureXaiPromptCacheKey(
+  body: Record<string, unknown>,
+  sessionId?: string | null,
+): void {
+  const existing = body.prompt_cache_key;
+  if (typeof existing === "string") {
+    const clamped = clampXaiPromptCacheKey(existing);
+    if (clamped) {
+      body.prompt_cache_key = clamped;
+      return;
+    }
+    delete body.prompt_cache_key;
+  }
+  const key = clampXaiPromptCacheKey(sessionId ?? undefined);
+  if (key) body.prompt_cache_key = key;
+}
+
 async function callXaiResponses(
   apiKey: string,
   baseUrl: string,
   body: Record<string, unknown>,
   timeout?: number,
+  sessionId?: string | null,
+  cwd?: string,
 ): Promise<any> {
   const input = (body as any).input;
-  if (Array.isArray(input)) normalizeForXai(input);
+  if (Array.isArray(input)) {
+    normalizeForXai(input);
+    if (cwd) {
+      const modelId = typeof body.model === "string" ? body.model : "";
+      const supportsImages = !modelId.toLowerCase().includes("composer");
+      let next = normalizeImageParts(input, cwd) as Record<string, unknown>[];
+      next = rewriteFunctionCallOutputImages(next, supportsImages);
+      (body as any).input = next;
+    }
+  }
+  ensureXaiPromptCacheKey(body, sessionId);
 
+  const modelId = typeof body.model === "string" ? body.model : "";
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`;
   const init: RequestInit & { signal?: AbortSignal } = {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      ...xaiRequestHeaders(modelId, baseUrl, sessionId),
+    },
     body: JSON.stringify(body),
   };
   if (timeout) init.signal = AbortSignal.timeout(timeout);
@@ -201,9 +285,12 @@ export function normalizeForXai(input: unknown[]): unknown[] {
   return input;
 }
 
-function rewriteXaiProviderInput(payload: Record<string, unknown>): void {
+function rewriteXaiProviderInput(
+  payload: Record<string, unknown>,
+  options?: { cwd?: string; modelId?: string },
+): void {
   if (!Array.isArray(payload.input)) return;
-  const input = payload.input as any[];
+  let input = payload.input as any[];
   normalizeForXai(input);
 
   const instructionParts: string[] = [];
@@ -234,27 +321,14 @@ function rewriteXaiProviderInput(payload: Record<string, unknown>): void {
       : instructionParts.join("\n\n");
   }
 
-  for (const item of input) {
-    if (
-      item &&
-      typeof item === "object" &&
-      item.type === "function_call_output" &&
-      Array.isArray(item.output)
-    ) {
-      const asText =
-        (item.output as any[])
-          .map((p: any) =>
-            typeof p === "string"
-              ? p
-              : p && typeof p === "object"
-                ? p.text || (p.type === "input_image" ? "[image]" : JSON.stringify(p))
-                : String(p ?? ""),
-          )
-          .filter(Boolean)
-          .join("\n") || "(tool returned no text output)";
-      (item as any).output = asText;
-    }
-  }
+  const cwd = options?.cwd || process.cwd();
+  const modelId = (options?.modelId || String(payload.model || "")).toLowerCase();
+  const supportsImages = !modelId.includes("composer");
+
+  // Local path → data URI, image_url → input_image, then safe function_call_output rewrite.
+  input = normalizeImageParts(input, cwd) as any[];
+  input = rewriteFunctionCallOutputImages(input as Record<string, unknown>[], supportsImages);
+  payload.input = input;
 }
 
 // ponytail: drops enums with '/', xAI 422; upgrade when xAI accepts slash enums
@@ -299,11 +373,22 @@ export function mergeXaiTools(existing: unknown[], builtins: unknown[]): unknown
   });
 }
 
-// xAI docs: request reasoning.encrypted_content on reasoning models for multi-turn replay.
+// xAI public API: request reasoning.encrypted_content on reasoning models for multi-turn replay.
+// Grok CLI proxy rejects that include — strip it when baseUrl is the proxy (pi-grok-cli parity).
 function ensureXaiEncryptedReasoningInclude(
   payload: Record<string, unknown>,
   model: string | undefined,
+  baseUrl?: string,
 ): void {
+  if (isGrokCliProxyBaseUrl(baseUrl)) {
+    if (Array.isArray((payload as any).include)) {
+      (payload as any).include = (payload as any).include.filter(
+        (item: unknown) => item !== "reasoning.encrypted_content",
+      );
+      if ((payload as any).include.length === 0) delete (payload as any).include;
+    }
+    return;
+  }
   if (!grokWantsEncryptedReasoningInclude(model ?? "")) return;
   const want = "reasoning.encrypted_content";
   const inc = (payload as any).include;
@@ -324,9 +409,39 @@ export default async function (api: ExtensionAPI) {
   // The powerful xAI tools below work with both grok-build OAuth and regular XAI_API_KEY.
   registerXaiProvider(api);
 
+  // Cursor/Composer Grep+Glob shims + arg aliases (activate on grok-build).
+  // Inspired by kenryu42/pi-grok-cli — thanks @kenryu42.
+  registerGrokToolShims(api);
+
+  // Vision routing: default ON for Composer only; /xai-vision:on for all text-only.
+  // Inspired by kenryu42/pi-grok-cli — thanks @kenryu42.
+  registerXaiVision(api);
+
+  // Grok CLI–style subscription usage (weekly/monthly limit % from Grok Build billing)
+  api.registerCommand("xai-usage", {
+    description: "Show Grok Build subscription usage limit and next reset",
+    async handler(_args, ctx) {
+      try {
+        const effective = await getEffectiveXaiApiKey();
+        if (!effective?.apiKey) {
+          ctx.ui.notify(
+            `No xAI credentials. Run /login grok-build (or import grok CLI login).\n${GROK_USAGE_PAGE_URL}`,
+            "error",
+          );
+          return;
+        }
+        const billing = await fetchBillingUsage(effective.apiKey);
+        ctx.ui.notify(formatGrokBuildBilling(billing), "info");
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        ctx.ui.notify(`${msg}\n${GROK_USAGE_PAGE_URL}`, "error");
+      }
+    },
+  });
+
   // Agentic mode: automatically inject xAI built-in tools into provider requests
   // when an xAI model (grok-*) is active. Controlled via settings: xai.text.agentic
-  api.on("before_provider_request", async (event) => {
+  api.on("before_provider_request", async (event, ctx) => {
     const payload = event.payload as Record<string, unknown> | undefined;
     if (!payload) return;
 
@@ -386,8 +501,14 @@ export default async function (api: ExtensionAPI) {
       }
     }
 
-    ensureXaiEncryptedReasoningInclude(payload, model);
-    rewriteXaiProviderInput(payload);
+    const baseUrl = resolveXaiConfig().xai.baseUrl;
+    ensureXaiEncryptedReasoningInclude(payload, model, baseUrl);
+    rewriteXaiProviderInput(payload, {
+      cwd: ctx.cwd || process.cwd(),
+      modelId: model,
+    });
+    // Pi openai-responses usually sets this already; re-assert for cache affinity if missing.
+    ensureXaiPromptCacheKey(payload, ctx.sessionManager.getSessionId());
   });
 
   // Post-process final assistant text for grok-* (normal chat + agentic search tools).
@@ -424,19 +545,10 @@ export default async function (api: ExtensionAPI) {
           }),
         ),
         reasoningEffort: Type.Optional(
-          Type.Union(
-            [
-              Type.Literal("none"),
-              Type.Literal("low"),
-              Type.Literal("medium"),
-              Type.Literal("high"),
-              Type.Literal("xhigh"),
-            ],
-            {
-              description:
-                "grok-4.5 / grok-4.3: none/low/medium/high. grok-4.20-multi-agent: low/medium/high/xhigh (agent count).",
-            },
-          ),
+          Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], {
+            description:
+              "grok-4.5 / grok-4.3: low/medium/high (API default high; cannot disable). Prefer low for latency-sensitive agentic use.",
+          }),
         ),
         system: Type.Optional(Type.String({ description: "System/developer instruction" })),
         previousResponseId: Type.Optional(
@@ -467,7 +579,7 @@ export default async function (api: ExtensionAPI) {
           }),
         ),
       }),
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         const {
           prompt,
           model,
@@ -528,103 +640,119 @@ export default async function (api: ExtensionAPI) {
         }
         if (mappedTools?.length) body.tools = mappedTools;
         if (parsedFormat) body.text = { format: parsedFormat };
-        if (
-          reasoningEffort &&
-          isReasoningModel &&
-          modelToUse !== "grok-build" &&
-          modelToUse !== "grok-build-0.1"
-        ) {
+        if (reasoningEffort && isReasoningModel && !modelToUse.startsWith("grok-build")) {
           body.reasoning = { effort: reasoningEffort };
         }
 
-        const result = await callXaiResponses(apiKey, config.xai.baseUrl, body, effectiveTimeout);
+        const result = await callXaiResponses(
+          apiKey,
+          config.xai.baseUrl,
+          body,
+          effectiveTimeout,
+          ctx.sessionManager.getSessionId(),
+          ctx.cwd,
+        );
 
         return textResult(formatResponseSummary(result, "xAI Response"));
       },
     }),
   );
 
-  api.registerTool(
-    defineTool({
-      name: "xai_multi_agent",
-      label: "xAI Multi-Agent Research",
-      description:
-        "Deep research via xAI multi-agent model (grok-4.20-multi-agent). Orchestrates multiple agents with built-in tools (web_search, x_search + advanced via objects, collections_search). Returns formatted summary with progress via onUpdate; streaming content via core provider or raw API.",
-      parameters: Type.Object({
-        prompt: Type.String({ description: "Research query / question" }),
-        reasoningEffort: Type.Optional(
-          Type.Union(
-            [
-              Type.Literal("low"),
-              Type.Literal("medium"),
-              Type.Literal("high"),
-              Type.Literal("xhigh"),
-            ],
-            { description: "low/medium=4 agents, high/xhigh=16 agents" },
+  // Off by default: grok-4.20 multi-agent is a separate research model, not the Grok 4.5 path.
+  // Opt in: { "xai": { "text": { "multiAgent": true } } } in ~/.pi/agent/settings.json
+  if (isMultiAgentToolEnabled()) {
+    api.registerTool(
+      defineTool({
+        name: "xai_multi_agent",
+        label: "xAI Multi-Agent Research",
+        description:
+          "Deep research via xAI multi-agent model (grok-4.20-multi-agent). Orchestrates multiple agents with built-in tools (web_search, x_search + advanced via objects, collections_search). Returns formatted summary with progress via onUpdate; streaming content via core provider or raw API.",
+        parameters: Type.Object({
+          prompt: Type.String({ description: "Research query / question" }),
+          reasoningEffort: Type.Optional(
+            Type.Union(
+              [
+                Type.Literal("low"),
+                Type.Literal("medium"),
+                Type.Literal("high"),
+                Type.Literal("xhigh"),
+              ],
+              { description: "low/medium=4 agents, high/xhigh=16 agents" },
+            ),
           ),
-        ),
-        tools: Type.Optional(
-          Type.Array(Type.Any(), {
-            description:
-              "Built-in tools (Responses API names or full config objects): web_search, x_search, code_interpreter, collections_search. Simple strings for basic; objects for advanced filters (allowed_x_handles, from_date/to_date, enable_image_understanding, enable_video_understanding, etc.) per x-search/web-search docs.",
-          }),
-        ),
-        previousResponseId: Type.Optional(
-          Type.String({ description: "Continue previous multi-agent conversation" }),
-        ),
-        store: Type.Optional(Type.Boolean({ description: "Store response server-side" })),
-        include: Type.Optional(
-          Type.Array(Type.String(), {
-            description: "Include verbose_streaming or reasoning.encrypted_content",
-          }),
-        ),
-        timeout: Type.Optional(Type.Number({ description: "Timeout in ms (default 3600000)" })),
+          tools: Type.Optional(
+            Type.Array(Type.Any(), {
+              description:
+                "Built-in tools (Responses API names or full config objects): web_search, x_search, code_interpreter, collections_search. Simple strings for basic; objects for advanced filters (allowed_x_handles, from_date/to_date, enable_image_understanding, enable_video_understanding, etc.) per x-search/web-search docs.",
+            }),
+          ),
+          previousResponseId: Type.Optional(
+            Type.String({ description: "Continue previous multi-agent conversation" }),
+          ),
+          store: Type.Optional(Type.Boolean({ description: "Store response server-side" })),
+          include: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Include verbose_streaming or reasoning.encrypted_content",
+            }),
+          ),
+          timeout: Type.Optional(Type.Number({ description: "Timeout in ms (default 3600000)" })),
+        }),
+        async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+          const { prompt, reasoningEffort, tools, previousResponseId, store, include, timeout } =
+            params;
+          const { apiKey, config } = await createRuntime();
+          const agentCount = reasoningEffort === "high" || reasoningEffort === "xhigh" ? 16 : 4;
+
+          onUpdate?.({
+            content: [
+              {
+                type: "text" as const,
+                text: `🔬 Starting multi-agent research with ${agentCount} agents...`,
+              },
+            ],
+            details: `research-start: ${agentCount} agents`,
+          });
+
+          const input = [{ role: "user" as const, content: prompt }];
+          const mappedTools = tools?.map((t: any) => (typeof t === "string" ? { type: t } : t));
+
+          const body: Record<string, unknown> = {
+            model: "grok-4.20-multi-agent-0309",
+            input,
+          };
+          if (reasoningEffort) {
+            body.reasoning = { effort: reasoningEffort };
+          }
+          if (previousResponseId) body.previous_response_id = previousResponseId;
+          if (mappedTools?.length) body.tools = mappedTools;
+          if (store !== undefined) body.store = store;
+          if (include?.length) body.include = include;
+
+          const effectiveTimeout = timeout ?? 3_600_000;
+          const result = await callXaiResponses(
+            apiKey,
+            config.xai.baseUrl,
+            body,
+            effectiveTimeout,
+            ctx.sessionManager.getSessionId(),
+            ctx.cwd,
+          );
+
+          onUpdate?.({
+            content: [
+              {
+                type: "text" as const,
+                text: `✅ Research complete. ${result.usage?.output_tokens ?? "?"} output tokens (${result.usage?.output_tokens_details?.reasoning_tokens ?? 0} reasoning).`,
+              },
+            ],
+            details: `research-done: ${result.id}`,
+          });
+
+          return textResult(formatResponseSummary(result, "xAI Multi-Agent"));
+        },
       }),
-      async execute(_toolCallId, params, _signal, onUpdate) {
-        const { prompt, reasoningEffort, tools, previousResponseId, store, include, timeout } =
-          params;
-        const { apiKey, config } = await createRuntime();
-        const agentCount = reasoningEffort === "high" || reasoningEffort === "xhigh" ? 16 : 4;
-
-        onUpdate?.({
-          content: [
-            {
-              type: "text" as const,
-              text: `🔬 Starting multi-agent research with ${agentCount} agents...`,
-            },
-          ],
-          details: `research-start: ${agentCount} agents`,
-        });
-
-        const input = [{ role: "user" as const, content: prompt }];
-        const mappedTools = tools?.map((t: any) => (typeof t === "string" ? { type: t } : t));
-
-        const body: Record<string, unknown> = { model: "grok-4.20-multi-agent", input };
-        if (reasoningEffort) {
-          body.reasoning = { effort: reasoningEffort };
-        }
-        if (previousResponseId) body.previous_response_id = previousResponseId;
-        if (mappedTools?.length) body.tools = mappedTools;
-        if (store !== undefined) body.store = store;
-        if (include?.length) body.include = include;
-
-        const effectiveTimeout = timeout ?? 3_600_000;
-        const result = await callXaiResponses(apiKey, config.xai.baseUrl, body, effectiveTimeout);
-
-        onUpdate?.({
-          content: [
-            {
-              type: "text" as const,
-              text: `✅ Research complete. ${result.usage?.output_tokens ?? "?"} output tokens (${result.usage?.output_tokens_details?.reasoning_tokens ?? 0} reasoning).`,
-            },
-          ],
-          details: `research-done: ${result.id}`,
-        });
-
-        return textResult(formatResponseSummary(result, "xAI Multi-Agent"));
-      },
-    }),
-  );
+    );
+  }
 
   api.registerTool(
     defineTool({
@@ -641,20 +769,27 @@ export default async function (api: ExtensionAPI) {
           Type.String({ description: "Filter posts on or before this date (YYYY-MM-DD, UTC)" }),
         ),
       }),
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         const { query, from_date, to_date } = params;
         const { apiKey, config } = await createRuntime();
-        // ponytail: hardcoded grok-4.20-reasoning; upgrade: xai.x_search.model in settings
+        // Hardcoded 4.20 reasoning id from Grok CLI catalog; override later via settings if needed.
         const xSearchTool: Record<string, unknown> = { type: "x_search" };
         if (from_date?.trim()) xSearchTool.from_date = from_date.trim();
         if (to_date?.trim()) xSearchTool.to_date = to_date.trim();
         const body: Record<string, unknown> = {
-          model: "grok-4.20-reasoning",
+          model: "grok-4.20-0309-reasoning",
           input: [{ role: "user" as const, content: query.trim() }],
           tools: [xSearchTool],
           store: false,
         };
-        const result = await callXaiResponses(apiKey, config.xai.baseUrl, body, 300_000);
+        const result = await callXaiResponses(
+          apiKey,
+          config.xai.baseUrl,
+          body,
+          300_000,
+          ctx.sessionManager.getSessionId(),
+          ctx.cwd,
+        );
         return textResult(formatResponseSummary(result, "xAI X Search"));
       },
     }),

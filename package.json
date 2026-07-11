@@ -1,12 +1,11 @@
 {
   "name": "pi-xai",
-  "version": "0.10.0",
-  "description": "Pi extension for xAI text generation via Responses API — reasoning, multi-agent, structured outputs, tools",
+  "version": "0.15.0",
+  "description": "Pi extension for xAI Grok Build — CLI proxy, OAuth, Responses, agentic tools",
   "keywords": [
     "coding-plan",
     "grok",
     "grok-build",
-    "multi-agent",
     "pi-package",
     "responses-api",
     "xai"
@@ -22,7 +21,8 @@
     "tsconfig.json",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "assets"
   ],
   "type": "module",
   "scripts": {
@@ -41,9 +41,19 @@
   "dependencies": {
     "typebox": "^1.2.16"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.80.0",
+    "@earendil-works/pi-coding-agent": ">=0.80.0",
+    "pi-web-access": "*"
+  },
+  "peerDependenciesMeta": {
+    "pi-web-access": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.79.7",
-    "@earendil-works/pi-coding-agent": "^0.79.7",
+    "@earendil-works/pi-ai": "^0.80.6",
+    "@earendil-works/pi-coding-agent": "^0.80.6",
     "@typescript/native-preview": "^7.0.0-dev.20260618.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",

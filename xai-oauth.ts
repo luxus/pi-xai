@@ -1008,6 +1008,220 @@ export function getXaiApiKeyFromCredentials(cred: OAuthCredentials): string {
 }
 
 // =============================================================================
+// Grok Build subscription usage (same billing surface as Grok CLI `/usage`)
+// =============================================================================
+
+/** Unofficial Grok Build CLI proxy — works with grok-cli / grok-build OAuth tokens. */
+export const GROK_BUILD_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing";
+/** Grok web usage / account surface */
+export const GROK_USAGE_PAGE_URL = "https://grok.com/?_s=usage";
+
+export interface MonthlyUsage {
+  monthlyLimit: number;
+  used: number;
+  billingPeriodEnd: string;
+}
+
+export interface WeeklyUsage {
+  creditUsagePercent: number;
+  billingPeriodEnd: string;
+}
+
+export interface BillingUsage {
+  monthly: MonthlyUsage;
+  weekly?: WeeklyUsage;
+}
+
+/** @deprecated use BillingUsage — kept for siblings that imported the old name */
+export type GrokBuildBilling = BillingUsage;
+
+const RESET_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZoneName: "short",
+});
+
+const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
+
+function billingHeaders(token: string): Record<string, string> {
+  return {
+    authorization: `Bearer ${token}`,
+    "x-xai-token-auth": "xai-grok-cli",
+    accept: "application/json",
+  };
+}
+
+function moneyishVal(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v && typeof v === "object" && typeof (v as { val?: unknown }).val === "number") {
+    return (v as { val: number }).val;
+  }
+  return undefined;
+}
+
+function parseMonthlyUsage(payload: unknown): MonthlyUsage {
+  if (!payload || typeof payload !== "object") throw new Error("invalid billing payload");
+  const config = (payload as Record<string, unknown>).config;
+  if (!config || typeof config !== "object") throw new Error("invalid billing payload");
+  const c = config as Record<string, unknown>;
+  const monthlyLimit = moneyishVal(c.monthlyLimit);
+  const used = moneyishVal(c.used);
+  const billingPeriodEnd = c.billingPeriodEnd;
+  if (
+    typeof monthlyLimit !== "number" ||
+    typeof used !== "number" ||
+    typeof billingPeriodEnd !== "string" ||
+    !Number.isFinite(new Date(billingPeriodEnd).getTime())
+  ) {
+    throw new Error("invalid billing payload");
+  }
+  return { monthlyLimit, used, billingPeriodEnd };
+}
+
+function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const config = (payload as Record<string, unknown>).config;
+  if (!config || typeof config !== "object") return undefined;
+  const c = config as Record<string, unknown>;
+  const currentPeriod = c.currentPeriod as Record<string, unknown> | undefined;
+  if (currentPeriod?.type !== "USAGE_PERIOD_TYPE_WEEKLY") return undefined;
+  const creditUsagePercent = c.creditUsagePercent;
+  // Prefer period end from currentPeriod when present (matches weekly window)
+  const billingPeriodEnd =
+    (typeof currentPeriod.end === "string" && currentPeriod.end) ||
+    (typeof c.billingPeriodEnd === "string" ? c.billingPeriodEnd : undefined);
+  if (
+    typeof creditUsagePercent !== "number" ||
+    !Number.isFinite(creditUsagePercent) ||
+    typeof billingPeriodEnd !== "string" ||
+    !Number.isFinite(new Date(billingPeriodEnd).getTime())
+  ) {
+    return undefined;
+  }
+  return { creditUsagePercent, billingPeriodEnd };
+}
+
+function formatReset(iso: string): string {
+  const parts = RESET_FORMATTER.formatToParts(new Date(iso));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const hour = part("hour") === "24" ? "00" : part("hour");
+  return `${part("month")} ${part("day")}, ${hour}:${part("minute")} ${part("timeZoneName")} ${LOCAL_TIME_ZONE}`;
+}
+
+const detail = (label: string, value: string) => `      ${label.padEnd(9)}  ${value}`;
+
+/**
+ * Fetch monthly + weekly Grok Build usage for a subscription OAuth token.
+ * Monthly: GET …/v1/billing · Weekly: GET …/v1/billing?format=credits
+ * (cli-chat-proxy; not public docs.x.ai — may change without notice.)
+ */
+export async function fetchBillingUsage(accessToken: string): Promise<BillingUsage> {
+  const token = accessToken?.trim();
+  if (!token) {
+    throw new XaiAuthError("Missing xAI access token for billing lookup", {
+      reloginRequired: true,
+      code: "xai_billing_no_token",
+    });
+  }
+
+  const headers = billingHeaders(token);
+  const monthlyResponse = await fetch(GROK_BUILD_BILLING_URL, { headers });
+  if (!monthlyResponse.ok) {
+    const needLogin = monthlyResponse.status === 401 || monthlyResponse.status === 403;
+    throw new XaiAuthError(
+      needLogin
+        ? `Grok Build billing requires a subscription OAuth token. Run \`/login grok-build\`. (${monthlyResponse.status})`
+        : `billing endpoint returned ${monthlyResponse.status}`,
+      {
+        reloginRequired: needLogin,
+        code: needLogin ? "xai_billing_auth" : "xai_billing_failed",
+      },
+    );
+  }
+
+  let monthlyPayload: unknown;
+  try {
+    monthlyPayload = await monthlyResponse.json();
+  } catch (e) {
+    throw new XaiAuthError(`Grok Build billing returned invalid JSON: ${e}`, {
+      code: "xai_billing_invalid_json",
+    });
+  }
+
+  let monthly: MonthlyUsage;
+  try {
+    monthly = parseMonthlyUsage(monthlyPayload);
+  } catch {
+    throw new XaiAuthError("invalid billing payload", { code: "xai_billing_invalid_payload" });
+  }
+
+  const weekly = await fetchWeeklyUsage(headers).catch(() => undefined);
+  return { monthly, weekly };
+}
+
+async function fetchWeeklyUsage(headers: Record<string, string>): Promise<WeeklyUsage | undefined> {
+  const response = await fetch(`${GROK_BUILD_BILLING_URL}?format=credits`, { headers });
+  if (!response.ok) return undefined;
+  try {
+    return parseWeeklyUsage(await response.json());
+  } catch {
+    return undefined;
+  }
+}
+
+/** @deprecated use fetchBillingUsage */
+export async function fetchGrokBuildBilling(accessToken: string): Promise<BillingUsage> {
+  return fetchBillingUsage(accessToken);
+}
+
+/** Grok CLI `/usage`-style lines + web link. */
+export function formatQuota(usage: BillingUsage | undefined): string[] {
+  if (!usage) {
+    return [
+      "Usage:",
+      "  no billing data available — run /login grok-build (or import grok CLI login)",
+      "",
+      `Details: ${GROK_USAGE_PAGE_URL}`,
+    ];
+  }
+
+  const monthlyPercent = Math.round((usage.monthly.used / usage.monthly.monthlyLimit) * 100);
+  const lines = [
+    "Usage:",
+    "  Monthly",
+    detail(
+      "Credits",
+      `${usage.monthly.used.toLocaleString()} / ${usage.monthly.monthlyLimit.toLocaleString()} used  ${monthlyPercent}%`,
+    ),
+    detail(
+      "Remaining",
+      `${(usage.monthly.monthlyLimit - usage.monthly.used).toLocaleString()} credits`,
+    ),
+    detail("Reset", formatReset(usage.monthly.billingPeriodEnd)),
+  ];
+
+  if (usage.weekly) {
+    lines.push(
+      "",
+      "  Weekly",
+      detail("Limit", `${Math.round(usage.weekly.creditUsagePercent)}% used`),
+      detail("Reset", formatReset(usage.weekly.billingPeriodEnd)),
+    );
+  }
+
+  lines.push("", `Details: ${GROK_USAGE_PAGE_URL}`);
+  return lines;
+}
+
+/** Single string for Pi notify (same content as formatQuota). */
+export function formatGrokBuildBilling(usage: BillingUsage): string {
+  return formatQuota(usage).join("\n");
+}
+
+// =============================================================================
 // Combined key resolver used by the extension tools (grok-cli + Pi auth + env + settings)
 // =============================================================================
 

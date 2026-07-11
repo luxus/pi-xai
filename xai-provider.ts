@@ -1,34 +1,127 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveXaiConfig } from "./xai-config.ts";
 import { loginXai, refreshXaiToken, getXaiApiKeyFromCredentials } from "./xai-oauth.ts";
+import { grokCliModelHeaders, isGrokCliProxyBaseUrl, streamGrokCli } from "./xai-stream.ts";
 
-const GROK_COST = { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.75 };
+// ─── Cost constants ($/M tokens) — estimates for pi UI, not subscription credits ─
 
-// ponytail: aliases like grok-4.5-latest / grok-4.3-latest still work if typed manually; picker shows one entry each
-const GROK_BUILD_MODEL_SPECS = [
-  { id: "grok-4.5", name: "Grok 4.5", reasoning: true, contextWindow: 500_000 },
-  { id: "grok-build-0.1", name: "Grok Build", reasoning: false, contextWindow: 256_000 },
-  { id: "grok-4.3", name: "Grok 4.3", reasoning: true, contextWindow: 1_000_000 },
+const COST_BUILD = { input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0.2 };
+const COST_COMPOSER_FAST = { input: 3, output: 15, cacheRead: 0.5, cacheWrite: 0 };
+const COST_43 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
+const COST_45 = { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 };
+const COST_420 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
+
+export interface GrokBuildModelSpec {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  contextWindow: number;
+  maxTokens: number;
+  input: ("text" | "image")[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  thinkingLevelMap?: Record<string, string | null>;
+}
+
+// Catalog aligned with Grok CLI / pi-grok-cli / pi-xai-oauth observed models.
+const GROK_BUILD_MODEL_SPECS: GrokBuildModelSpec[] = [
   {
     id: "grok-composer-2.5-fast",
-    name: "Grok Composer 2.5 Fast",
+    name: "Composer 2.5 Fast",
     reasoning: false,
     contextWindow: 200_000,
+    maxTokens: 30_000,
+    input: ["text"],
+    cost: COST_COMPOSER_FAST,
+    thinkingLevelMap: {
+      off: "none",
+      minimal: null,
+      low: null,
+      medium: null,
+      high: null,
+      xhigh: null,
+    },
   },
-] as const;
+  {
+    id: "grok-build",
+    name: "Grok Build",
+    reasoning: true,
+    contextWindow: 512_000,
+    maxTokens: 30_000,
+    input: ["text", "image"],
+    cost: COST_BUILD,
+  },
+  {
+    id: "grok-4.5",
+    name: "Grok 4.5",
+    reasoning: true,
+    contextWindow: 500_000,
+    maxTokens: 131_072,
+    input: ["text", "image"],
+    cost: COST_45,
+    thinkingLevelMap: {
+      off: null,
+      minimal: "low",
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+    },
+  },
+  {
+    id: "grok-4.3",
+    name: "Grok 4.3",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxTokens: 131_072,
+    input: ["text", "image"],
+    cost: COST_43,
+  },
+  {
+    id: "grok-4.20-0309-reasoning",
+    name: "Grok 4.20 Reasoning",
+    reasoning: true,
+    contextWindow: 2_000_000,
+    maxTokens: 131_072,
+    input: ["text", "image"],
+    cost: COST_420,
+  },
+  {
+    id: "grok-4.20-0309-non-reasoning",
+    name: "Grok 4.20 Non-Reasoning",
+    reasoning: false,
+    contextWindow: 2_000_000,
+    maxTokens: 131_072,
+    input: ["text", "image"],
+    cost: COST_420,
+    thinkingLevelMap: {
+      off: "none",
+      minimal: null,
+      low: null,
+      medium: null,
+      high: null,
+      xhigh: null,
+    },
+  },
+  {
+    id: "grok-4.20-multi-agent-0309",
+    name: "Grok 4.20 Multi-Agent",
+    reasoning: true,
+    contextWindow: 2_000_000,
+    maxTokens: 131_072,
+    input: ["text", "image"],
+    cost: COST_420,
+  },
+];
 
-export const GROK_BUILD_MODELS = GROK_BUILD_MODEL_SPECS.map((m) => ({
-  ...m,
-  input: ["text", "image"] as ("text" | "image")[],
-  cost: GROK_COST,
-  maxTokens: 32768,
-}));
+export const GROK_BUILD_MODELS = GROK_BUILD_MODEL_SPECS.map((m) => ({ ...m }));
 
 export function registerXaiProvider(api: ExtensionAPI) {
   const config = resolveXaiConfig();
+  const baseUrl = config.xai.baseUrl;
+  const useCliHeaders = isGrokCliProxyBaseUrl(baseUrl);
 
   api.registerProvider("grok-build", {
-    baseUrl: config.xai.baseUrl,
+    baseUrl,
     api: "openai-responses",
     authHeader: true,
     oauth: {
@@ -38,6 +131,18 @@ export function registerXaiProvider(api: ExtensionAPI) {
       refreshToken: refreshXaiToken,
       getApiKey: getXaiApiKeyFromCredentials,
     } as any,
-    models: [...GROK_BUILD_MODELS],
+    models: GROK_BUILD_MODELS.map((m) => ({
+      id: m.id,
+      name: m.name,
+      reasoning: m.reasoning,
+      thinkingLevelMap: m.thinkingLevelMap,
+      input: m.input,
+      cost: m.cost,
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
+      // Carry CLI headers on the model so tool-continuation turns still pass the version gate.
+      ...(useCliHeaders ? { headers: grokCliModelHeaders(m.id) } : {}),
+    })),
+    streamSimple: streamGrokCli as any,
   });
 }

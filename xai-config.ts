@@ -2,7 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+/** Public xAI API (override via xai.baseUrl when needed). */
 export const XAI_API_BASE = "https://api.x.ai/v1";
+
+/** Default: Grok CLI subscription proxy (more complete model catalog). */
+export const XAI_CLI_BASE = "https://cli-chat-proxy.grok.com/v1";
+
 export const USER_PI_SETTINGS_PATH = resolve(homedir(), ".pi/agent/settings.json");
 export const PROJECT_PI_SETTINGS_PATH = resolve(process.cwd(), ".pi/settings.json");
 
@@ -56,7 +61,9 @@ export function resolveXaiConfig(): ResolvedXaiConfig {
 
   return {
     xai: {
-      baseUrl: getString(mergedXai, "baseUrl") || XAI_API_BASE,
+      // Prefer Grok CLI proxy so composer / build / 4.20 stay on the subscription surface.
+      // Override with "https://api.x.ai/v1" for public-API key traffic.
+      baseUrl: getString(mergedXai, "baseUrl") || XAI_CLI_BASE,
       text: { ...textUser, ...textProject },
     },
   };
@@ -86,6 +93,40 @@ export function grokWantsEncryptedReasoningInclude(model: string): boolean {
   return grokSupportsReasoningEffort(name) || name.includes("reasoning");
 }
 
+/**
+ * How web search is provided while using grok-build / agentic xAI tools.
+ *
+ * - `native` (default): xAI server-side `web_search` only. Leave pi-web-access alone
+ *   so other models can still use its client `web_search` if installed.
+ * - `web-access`: replace native agentic `web_search` with Cursor `WebSearch`
+ *   (requires `pi install npm:pi-web-access`).
+ * - `both`: keep native agentic `web_search` and also activate `WebSearch`.
+ *
+ * Set via `xai.text.webSearch` in `~/.pi/agent/settings.json` or project settings.
+ */
+export type XaiWebSearchMode = "native" | "web-access" | "both";
+
+export function getWebSearchMode(config: ResolvedXaiConfig = resolveXaiConfig()): XaiWebSearchMode {
+  const raw = config.xai.text?.webSearch;
+  if (typeof raw !== "string") return "native";
+  const v = raw.trim().toLowerCase();
+  if (v === "web-access" || v === "web_access" || v === "client" || v === "pi-web-access") {
+    return "web-access";
+  }
+  if (v === "both") return "both";
+  return "native";
+}
+
+/** Activate Cursor WebSearch (pi-web-access) for grok-build. */
+export function wantsClientWebSearch(mode: XaiWebSearchMode = getWebSearchMode()): boolean {
+  return mode === "web-access" || mode === "both";
+}
+
+/** Inject xAI server-side web_search in agentic mode. */
+export function wantsNativeWebSearch(mode: XaiWebSearchMode = getWebSearchMode()): boolean {
+  return mode === "native" || mode === "both";
+}
+
 export function getAgenticConfig(config: ResolvedXaiConfig): {
   enabled: boolean;
   tools: string[];
@@ -97,10 +138,30 @@ export function getAgenticConfig(config: ResolvedXaiConfig): {
     return { enabled: false, tools: [] };
   }
 
-  const tools = text?.agenticTools;
-  if (Array.isArray(tools) && tools.every((t): t is string => typeof t === "string")) {
-    return { enabled: true, tools };
+  const toolsSetting = text?.agenticTools;
+  let tools: string[];
+  if (
+    Array.isArray(toolsSetting) &&
+    toolsSetting.every((t): t is string => typeof t === "string")
+  ) {
+    tools = [...toolsSetting];
+  } else {
+    tools = ["web_search", "x_search", "code_interpreter"];
   }
 
-  return { enabled: true, tools: ["web_search", "x_search", "code_interpreter"] };
+  // Optional replace: drop native server-side web_search when user chose web-access only.
+  if (!wantsNativeWebSearch(getWebSearchMode(config))) {
+    tools = tools.filter((t) => t !== "web_search");
+  }
+
+  return { enabled: true, tools };
+}
+
+/**
+ * Opt-in only. grok-4.20 multi-agent is a separate research model; Grok 4.5 / composer
+ * is the default coding path. Enable with xai.text.multiAgent: true in settings.
+ */
+export function isMultiAgentToolEnabled(config: ResolvedXaiConfig = resolveXaiConfig()): boolean {
+  const v = config.xai.text?.multiAgent;
+  return v === true || v === "true";
 }
