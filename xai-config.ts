@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-/** Public xAI API (override via xai.baseUrl when needed). */
+/** Default: public xAI API (encrypted reasoning, full Responses surface). */
 export const XAI_API_BASE = "https://api.x.ai/v1";
 
-/** Default: Grok CLI subscription proxy (more complete model catalog). */
+/** Optional: Grok CLI subscription proxy (Composer/Build catalog; strips encrypted reasoning). */
 export const XAI_CLI_BASE = "https://cli-chat-proxy.grok.com/v1";
 
 export const USER_PI_SETTINGS_PATH = resolve(homedir(), ".pi/agent/settings.json");
@@ -61,9 +61,9 @@ export function resolveXaiConfig(): ResolvedXaiConfig {
 
   return {
     xai: {
-      // Prefer Grok CLI proxy so composer / build / 4.20 stay on the subscription surface.
-      // Override with "https://api.x.ai/v1" for public-API key traffic.
-      baseUrl: getString(mergedXai, "baseUrl") || XAI_CLI_BASE,
+      // Default public API: multi-turn encrypted reasoning works.
+      // Override with XAI_CLI_BASE for Grok CLI catalog / version-gate traffic.
+      baseUrl: getString(mergedXai, "baseUrl") || XAI_API_BASE,
       text: { ...textUser, ...textProject },
     },
   };
@@ -158,10 +158,11 @@ export function getAgenticConfig(config: ResolvedXaiConfig): {
 }
 
 /**
- * Opt-in only. grok-4.20 multi-agent is a separate research model; Grok 4.5 / composer
- * is the default coding path. Enable with xai.text.multiAgent: true in settings.
+ * On by default. Registers `xai_multi_agent` (currently grok-4.20 multi-agent; may track
+ * newer multi-agent models later). Disable with xai.text.multiAgent: false.
  */
 export function isMultiAgentToolEnabled(config: ResolvedXaiConfig = resolveXaiConfig()): boolean {
   const v = config.xai.text?.multiAgent;
-  return v === true || v === "true";
+  if (v === false || v === "false") return false;
+  return true;
 }

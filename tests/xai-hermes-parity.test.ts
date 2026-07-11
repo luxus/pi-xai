@@ -60,9 +60,9 @@ describe("Hermes xAI parity", () => {
     expect(grokSupportsReasoningEffort("grok-composer-2.5-fast")).toBe(false);
   });
 
-  test("xai_multi_agent is opt-in (off by default)", () => {
+  test("xai_multi_agent is on by default (opt-out with multiAgent: false)", () => {
     expect(isMultiAgentToolEnabled({ xai: { baseUrl: "https://api.x.ai/v1", text: {} } })).toBe(
-      false,
+      true,
     );
     expect(
       isMultiAgentToolEnabled({
@@ -74,6 +74,16 @@ describe("Hermes xAI parity", () => {
         xai: { baseUrl: "https://api.x.ai/v1", text: { multiAgent: "true" } },
       }),
     ).toBe(true);
+    expect(
+      isMultiAgentToolEnabled({
+        xai: { baseUrl: "https://api.x.ai/v1", text: { multiAgent: false } },
+      }),
+    ).toBe(false);
+    expect(
+      isMultiAgentToolEnabled({
+        xai: { baseUrl: "https://api.x.ai/v1", text: { multiAgent: "false" } },
+      }),
+    ).toBe(false);
   });
 
   test("grokWantsEncryptedReasoningInclude follows xAI reasoning models", () => {

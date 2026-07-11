@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>xAI Grok for <a href="https://github.com/earendil-works/pi">Pi</a></strong><br>
-  CLI proxy · OAuth · Agentic tools · Composer / Build / 4.5 / 4.20
+  api.x.ai · OAuth · Agentic tools · Multi-agent · Composer / Build / 4.5 / 4.20
 </p>
 
 <p align="center">
@@ -20,14 +20,15 @@
 
 ## Why
 
-Use Grok models inside Pi with the same surface as **Grok CLI**:
+Use Grok models inside Pi on the **public xAI API** by default:
 
-- Default base URL is the **subscription proxy** (`cli-chat-proxy.grok.com`)
-- **OAuth** via `/login grok-build` (SuperGrok / X entitlement)
+- Default base URL is **`api.x.ai`** (encrypted multi-turn reasoning)
+- **OAuth** via `/login grok-build` (SuperGrok / X entitlement) or `XAI_API_KEY`
 - **Agentic** server-side `web_search`, `x_search`, `code_interpreter`
+- **`xai_multi_agent`** research tool on by default
 - Composer-friendly **Grep/Glob** shims and optional vision routing
 
-Public API key traffic still works — point `xai.baseUrl` at `api.x.ai`.
+Prefer the Grok CLI proxy catalog? Set `xai.baseUrl` to `https://cli-chat-proxy.grok.com/v1` (note: that endpoint strips `reasoning.encrypted_content`).
 
 Requires **Pi ≥ 0.80**.
 
@@ -75,17 +76,18 @@ Pi cost numbers are **per-token UI estimates**, not subscription credits. Check 
 
 ## Endpoint & auth
 
-| | Default (subscription) | Public API |
+| | Default (public API) | CLI proxy override |
 | --- | --- | --- |
-| Base URL | `https://cli-chat-proxy.grok.com/v1` | `https://api.x.ai/v1` |
-| Auth | `/login grok-build` | OAuth or `XAI_API_KEY` |
-| Headers | Grok CLI client (`0.2.91`) | not required |
+| Base URL | `https://api.x.ai/v1` | `https://cli-chat-proxy.grok.com/v1` |
+| Auth | OAuth or `XAI_API_KEY` | `/login grok-build` |
+| Encrypted reasoning | yes | stripped (proxy rejects it) |
+| Headers | not required | Grok CLI client (`0.2.91`) |
 
 ```json
 // ~/.pi/agent/settings.json  (or project .pi/settings.json)
 {
   "xai": {
-    "baseUrl": "https://api.x.ai/v1"
+    "baseUrl": "https://cli-chat-proxy.grok.com/v1"
   }
 }
 ```
@@ -131,15 +133,15 @@ Server-side built-ins on every Grok turn:
 | --- | --- |
 | `xai_generate_text` | Full Responses API — tools, schema, reasoning, store |
 | `xai_x_search` | Native X search (`grok-4.20-0309-reasoning`) |
-| `xai_multi_agent` | Multi-agent research — **off by default** |
+| `xai_multi_agent` | Multi-agent research — **on by default** (currently 4.20 multi-agent) |
 
-Enable multi-agent:
+Disable multi-agent:
 
 ```json
 {
   "xai": {
     "text": {
-      "multiAgent": true
+      "multiAgent": false
     }
   }
 }

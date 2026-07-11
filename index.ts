@@ -658,8 +658,8 @@ export default async function (api: ExtensionAPI) {
     }),
   );
 
-  // Off by default: grok-4.20 multi-agent is a separate research model, not the Grok 4.5 path.
-  // Opt in: { "xai": { "text": { "multiAgent": true } } } in ~/.pi/agent/settings.json
+  // On by default (xai.text.multiAgent). Currently grok-4.20 multi-agent model id.
+  // Disable: { "xai": { "text": { "multiAgent": false } } }
   if (isMultiAgentToolEnabled()) {
     api.registerTool(
       defineTool({

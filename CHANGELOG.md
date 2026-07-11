@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-07-11
+
+### Changed
+
+- **Default base URL is `api.x.ai` again** — restores multi-turn `reasoning.encrypted_content` (CLI proxy still available via `xai.baseUrl: "https://cli-chat-proxy.grok.com/v1"`, which strips that include).
+- **`xai_multi_agent` on by default** — opt out with `xai.text.multiAgent: false`. Still uses the 4.20 multi-agent model id until a newer multi-agent SKU lands.
+
 ## [0.15.0] - 2026-07-11
 
 ### Changed
