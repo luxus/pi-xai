@@ -1,7 +1,7 @@
 {
   "name": "pi-xai",
-  "version": "0.16.0",
-  "description": "Pi extension for xAI Grok Build — Responses API, OAuth, agentic tools, multi-agent",
+  "version": "0.16.1",
+  "description": "Pi extension for xAI Grok Build \u2014 Responses API, OAuth, agentic tools, multi-agent",
   "keywords": [
     "coding-plan",
     "grok",

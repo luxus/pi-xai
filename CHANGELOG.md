@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-07-16
+
 ### Fixed
 
 - **Grok CLI import keeps `refresh_token`** — `readGrokCliAuth` / import / auto-import no longer drop refresh; expired access is refreshed or skipped (never returned dead). Can heal empty pi-auth refresh from `~/.grok/auth.json`.
