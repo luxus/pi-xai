@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-15
+
 ### Added
 
 - **Isolated Imagine tools in pi-xai** — `image_gen` + `image_edit` only (no video/studio). Official payload; opt out `xai.text.imageGen: false`.
