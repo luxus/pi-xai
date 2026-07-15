@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-07-16
+
+### Fixed
+
+- **`image_edit` local paths** — convert filesystem paths / `file://` to `data:image/...;base64,...` before `/images/edits` (Grok Build parity). Bare paths were rejected by the Imagine API with `image_url must either be a base64-encoded image or a URL`.
+
 ## [0.16.1] - 2026-07-16
 
 ### Fixed

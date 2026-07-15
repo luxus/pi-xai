@@ -4,9 +4,10 @@
  * Opt out: `xai.text.imageGen: false`.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isImageGenEnabled, resolveXaiConfig } from "./xai-config.ts";
@@ -85,11 +86,57 @@ export async function generateImage(
   return { path: saveB64(b64, "gen"), model };
 }
 
+/**
+ * Resolve one image_edit reference to an API-safe URL (https or data URI).
+ * Mirrors xai-org/grok-build image_edit: local paths and file:// are read and
+ * sent as data:image/...;base64,... — the Imagine API rejects bare filesystem paths.
+ */
+export function resolveImagineImageRef(value: string, cwd = process.cwd()): string {
+  const cleaned = value.trim().replace(/^['"]|['"]$/g, "");
+  if (!cleaned) throw new Error("empty image reference");
+  if (/^https?:\/\//i.test(cleaned) || /^data:image\//i.test(cleaned)) return cleaned;
+
+  let filePath = cleaned;
+  if (cleaned.startsWith("file://")) {
+    try {
+      filePath = fileURLToPath(cleaned);
+    } catch {
+      throw new Error(`invalid file:// image reference: ${cleaned}`);
+    }
+  } else if (!isAbsolute(filePath)) {
+    filePath = resolve(cwd, filePath);
+  }
+
+  if (!existsSync(filePath)) {
+    throw new Error(`image reference not readable: ${cleaned}`);
+  }
+
+  const ext = extname(filePath).toLowerCase();
+  const mime =
+    ext === ".png"
+      ? "image/png"
+      : ext === ".webp"
+        ? "image/webp"
+        : ext === ".gif"
+          ? "image/gif"
+          : ext === ".jpg" || ext === ".jpeg"
+            ? "image/jpeg"
+            : undefined;
+  if (!mime) {
+    throw new Error(`unsupported image type for image_edit: ${ext || "(none)"}`);
+  }
+
+  const b64 = readFileSync(filePath).toString("base64");
+  if (!b64) throw new Error(`image reference contained no data: ${cleaned}`);
+  return `data:${mime};base64,${b64}`;
+}
+
 /** Official image_edit; aspect only for multi-ref. */
 export async function editImage(
   apiKey: string,
   baseUrl: string,
   params: { prompt: string; image: string | string[]; aspect_ratio?: string; model?: string },
+  cwd = process.cwd(),
 ): Promise<{ path: string; model: string }> {
   const prompt = params.prompt?.trim();
   if (!prompt) throw new Error("prompt is required");
@@ -97,6 +144,9 @@ export async function editImage(
     .map((s) => s?.trim())
     .filter(Boolean) as string[];
   if (!refs.length) throw new Error("image_edit requires at least one reference image");
+
+  // Always convert paths → data URIs before the API call (grok-build parity).
+  const urls = refs.map((r) => resolveImagineImageRef(r, cwd));
 
   const model = params.model?.trim() || XAI_IMAGINE_MODEL;
   const body: Record<string, unknown> = {
@@ -106,10 +156,10 @@ export async function editImage(
     resolution: "1k",
     response_format: "b64_json",
   };
-  if (refs.length === 1) {
-    body.image = { url: refs[0] };
+  if (urls.length === 1) {
+    body.image = { url: urls[0] };
   } else {
-    body.images = refs.map((url) => ({ url }));
+    body.images = urls.map((url) => ({ url }));
     body.aspect_ratio = params.aspect_ratio?.trim() || "auto";
   }
 
@@ -158,11 +208,12 @@ export function registerXaiImageGen(api: ExtensionAPI): void {
       name: "image_edit",
       label: "image_edit",
       description:
-        "Edit one or more existing images with xAI Imagine. Pass filesystem paths or data:image/... URLs. Prefer this over image_gen when the user provides reference photos.",
+        "Edit one or more existing images with xAI Imagine. Pass absolute/relative filesystem paths, https URLs, or data:image/...;base64,... URIs — local paths are converted to data URIs before the API call (same as grok-build). Prefer this over image_gen when the user provides reference photos.",
       parameters: Type.Object({
         prompt: Type.String({ description: "Describe changes to make." }),
         image: Type.Union([Type.String(), Type.Array(Type.String())], {
-          description: "Source image path/URL/data URI, or list of them.",
+          description:
+            "Reference image(s): filesystem path (preferred when you have a local file), https URL, or data:image/...;base64,... URI. Paths under /tmp and the project work.",
         }),
         aspect_ratio: Type.Optional(
           Type.String({
