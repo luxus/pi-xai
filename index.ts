@@ -4,16 +4,25 @@ import {
   resolveXaiConfig,
   getAgenticConfig,
   isMultiAgentToolEnabled,
+  isUsageStatusEnabled,
   grokSupportsReasoningEffort,
   grokWantsEncryptedReasoningInclude,
   getPiSettingsPaths,
   type ResolvedXaiConfig,
 } from "./xai-config.ts";
 import { normalizeImageParts, rewriteFunctionCallOutputImages } from "./xai-images.ts";
-import { registerXaiProvider } from "./xai-provider.ts";
-import { registerGrokToolShims } from "./xai-tool-shims.ts";
+import { registerGrokCliConvHeaders, registerXaiProvider } from "./xai-provider.ts";
 import { isGrokCliProxyBaseUrl, xaiRequestHeaders } from "./xai-stream.ts";
+import { registerXaiImageGen } from "./xai-image-gen.ts";
 import { registerXaiVision } from "./xai-vision.ts";
+import {
+  clearUsageStatus,
+  isGrokModel,
+  noteBillingUsage,
+  paintUsageStatus,
+  registerXaiUsageStatus,
+  toggleUsageStatusbar,
+} from "./xai-usage-status.ts";
 import {
   getEffectiveXaiApiKey,
   autoImportGrokCliIfNeeded,
@@ -62,7 +71,6 @@ export {
   grokCliModelHeaders,
   isGrokCliProxyBaseUrl,
   xaiRequestHeaders,
-  streamGrokCli,
 } from "./xai-stream.ts";
 
 async function createRuntime(): Promise<{ apiKey: string; config: ResolvedXaiConfig }> {
@@ -373,22 +381,15 @@ export function mergeXaiTools(existing: unknown[], builtins: unknown[]): unknown
   });
 }
 
-// xAI public API: request reasoning.encrypted_content on reasoning models for multi-turn replay.
-// Grok CLI proxy rejects that include — strip it when baseUrl is the proxy (pi-grok-cli parity).
-function ensureXaiEncryptedReasoningInclude(
+/**
+ * Request reasoning.encrypted_content on reasoning models for multi-turn replay.
+ * Official Grok Build always includes this (store:false + client-side replay).
+ * Live-verified on cli-chat-proxy with CLI headers — do not strip for proxy.
+ */
+export function ensureXaiEncryptedReasoningInclude(
   payload: Record<string, unknown>,
   model: string | undefined,
-  baseUrl?: string,
 ): void {
-  if (isGrokCliProxyBaseUrl(baseUrl)) {
-    if (Array.isArray((payload as any).include)) {
-      (payload as any).include = (payload as any).include.filter(
-        (item: unknown) => item !== "reasoning.encrypted_content",
-      );
-      if ((payload as any).include.length === 0) delete (payload as any).include;
-    }
-    return;
-  }
   if (!grokWantsEncryptedReasoningInclude(model ?? "")) return;
   const want = "reasoning.encrypted_content";
   const inc = (payload as any).include;
@@ -408,19 +409,38 @@ export default async function (api: ExtensionAPI) {
   // Register xAI (Grok Build) provider (subscription OAuth + Responses API)
   // The powerful xAI tools below work with both grok-build OAuth and regular XAI_API_KEY.
   registerXaiProvider(api);
-
-  // Cursor/Composer Grep+Glob shims + arg aliases (activate on grok-build).
-  // Inspired by kenryu42/pi-grok-cli — thanks @kenryu42.
-  registerGrokToolShims(api);
+  // Dynamic x-grok-conv-id for CLI proxy only (static version-gate headers are on models).
+  registerGrokCliConvHeaders(api);
 
   // Vision routing: default ON for Composer only; /xai-vision:on for all text-only.
   // Inspired by kenryu42/pi-grok-cli — thanks @kenryu42.
   registerXaiVision(api);
 
+  // Isolated Imagine tools (image_gen / image_edit only — no video/studio).
+  // Official Grok Build protocol. Opt out: xai.text.imageGen: false.
+  registerXaiImageGen(api);
+
+  // Optional footer status: Grok N% left · Nd Nh (Grok models only).
+  registerXaiUsageStatus(api);
+
   // Grok CLI–style subscription usage (weekly/monthly limit % from Grok Build billing)
+  // `/xai-usage` shows bars; `/xai-usage statusbar` toggles the footer status.
   api.registerCommand("xai-usage", {
-    description: "Show Grok Build subscription usage limit and next reset",
-    async handler(_args, ctx) {
+    description: "Show Grok Build usage; `statusbar` toggles footer status",
+    async handler(args, ctx) {
+      const sub = (args ?? "").trim().toLowerCase();
+      if (sub === "statusbar" || sub === "status") {
+        await toggleUsageStatusbar(ctx);
+        return;
+      }
+      if (sub && sub !== "show" && sub !== "quota") {
+        ctx.ui.notify(
+          `Unknown /xai-usage arg "${args?.trim()}". Try /xai-usage or /xai-usage statusbar`,
+          "warning",
+        );
+        return;
+      }
+
       try {
         const effective = await getEffectiveXaiApiKey();
         if (!effective?.apiKey) {
@@ -431,7 +451,18 @@ export default async function (api: ExtensionAPI) {
           return;
         }
         const billing = await fetchBillingUsage(effective.apiKey);
-        ctx.ui.notify(formatGrokBuildBilling(billing), "info");
+        noteBillingUsage(billing);
+        // Keep footer in sync when status is enabled and a Grok model is active.
+        if (isUsageStatusEnabled()) {
+          if (isGrokModel(ctx.model)) paintUsageStatus(ctx, billing);
+          else clearUsageStatus(ctx);
+        }
+        ctx.ui.notify(
+          formatGrokBuildBilling(billing, {
+            showStatusbarTip: !isUsageStatusEnabled(),
+          }),
+          "info",
+        );
       } catch (err: any) {
         const msg = err?.message || String(err);
         ctx.ui.notify(`${msg}\n${GROK_USAGE_PAGE_URL}`, "error");
@@ -501,8 +532,7 @@ export default async function (api: ExtensionAPI) {
       }
     }
 
-    const baseUrl = resolveXaiConfig().xai.baseUrl;
-    ensureXaiEncryptedReasoningInclude(payload, model, baseUrl);
+    ensureXaiEncryptedReasoningInclude(payload, model);
     rewriteXaiProviderInput(payload, {
       cwd: ctx.cwd || process.cwd(),
       modelId: model,

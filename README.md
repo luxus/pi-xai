@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>xAI Grok for <a href="https://github.com/earendil-works/pi">Pi</a></strong><br>
-  api.x.ai · OAuth · Agentic tools · Multi-agent · Composer / Build / 4.5 / 4.20
+  cli-chat-proxy · OAuth · Agentic tools · Multi-agent · Composer / Build / 4.5 / 4.20
 </p>
 
 <p align="center">
@@ -20,15 +20,16 @@
 
 ## Why
 
-Use Grok models inside Pi on the **public xAI API** by default:
+Use Grok models inside Pi on the **Grok CLI subscription proxy** by default:
 
-- Default base URL is **`api.x.ai`** (encrypted multi-turn reasoning)
-- **OAuth** via `/login grok-build` (SuperGrok / X entitlement) or `XAI_API_KEY`
+- Default base URL is **`cli-chat-proxy.grok.com`** (subscription catalog + OAuth)
+- Encrypted multi-turn reasoning works on the proxy with CLI client headers
+- **OAuth** via `/login grok-build` (SuperGrok / X entitlement)
 - **Agentic** server-side `web_search`, `x_search`, `code_interpreter`
 - **`xai_multi_agent`** research tool on by default
-- Composer-friendly **Grep/Glob** shims and optional vision routing
+- Optional vision routing for text-only models
 
-Prefer the Grok CLI proxy catalog? Set `xai.baseUrl` to `https://cli-chat-proxy.grok.com/v1` (note: that endpoint strips `reasoning.encrypted_content`).
+Prefer the public API / API key? Set `xai.baseUrl` to `https://api.x.ai/v1`.
 
 Requires **Pi ≥ 0.80**.
 
@@ -51,7 +52,8 @@ pi install npm:pi-xai
 | --- | --- |
 | `/login grok-build` | OAuth for subscription models |
 | `/model grok-build/…` | Pick a model from the catalog below |
-| `/xai-usage` | Monthly credits + weekly limit % |
+| `/xai-usage` | Codex-style monthly/weekly bars (`% left`) + credits + reset |
+| `/xai-usage statusbar` | Toggle footer status: `Grok 40% left · 3d 12h` (Grok models only) |
 | `/xai-vision:status` | Vision routing mode for text-only models |
 
 > Live X posts: use agentic **`x_search`** or the **`xai_x_search`** tool — not Pi’s `x_semantic_search` / `x_keyword_search`.
@@ -63,7 +65,7 @@ pi install npm:pi-xai
 | ID | Context | Input | Role |
 | --- | ---: | --- | --- |
 | `grok-composer-2.5-fast` | 200K | text | Fast coding; vision routing on by default |
-| `grok-build` | 512K | text + image | Coding |
+| `grok-build` | 500K | text + image | Coding |
 | `grok-4.5` | 500K | text + image | Flagship reasoning |
 | `grok-4.3` | 1M | text + image | Long context |
 | `grok-4.20-0309-reasoning` | 2M | text + image | Auto reasoning |
@@ -76,18 +78,18 @@ Pi cost numbers are **per-token UI estimates**, not subscription credits. Check 
 
 ## Endpoint & auth
 
-| | Default (public API) | CLI proxy override |
+| | Default (CLI proxy) | Public API override |
 | --- | --- | --- |
-| Base URL | `https://api.x.ai/v1` | `https://cli-chat-proxy.grok.com/v1` |
-| Auth | OAuth or `XAI_API_KEY` | `/login grok-build` |
-| Encrypted reasoning | yes | stripped (proxy rejects it) |
-| Headers | not required | Grok CLI client (`0.2.91`) |
+| Base URL | `https://cli-chat-proxy.grok.com/v1` | `https://api.x.ai/v1` |
+| Auth | `/login grok-build` | OAuth or `XAI_API_KEY` |
+| Encrypted reasoning | yes (CLI headers) | yes |
+| Headers | Grok CLI client (`0.2.101`) | not required |
 
 ```json
-// ~/.pi/agent/settings.json  (or project .pi/settings.json)
+// ~/.pi/agent/settings.json  — only if you want the public API instead
 {
   "xai": {
-    "baseUrl": "https://cli-chat-proxy.grok.com/v1"
+    "baseUrl": "https://api.x.ai/v1"
   }
 }
 ```
@@ -105,6 +107,25 @@ Shows **monthly** credits used and **weekly** limit % from the same billing surf
 - Needs Grok Build OAuth (`/login grok-build` or imported `grok login`)
 - Plain `XAI_API_KEY` is usually not enough for this endpoint
 - Web view: [grok.com usage](https://grok.com/?_s=usage)
+
+### Optional footer status
+
+```text
+/xai-usage statusbar
+```
+
+Toggles a Pi footer line such as `Grok 40% left · 3d 12h` (tighter of monthly/weekly) when a **Grok** model is selected. Off by default. `/xai-usage` also shows a tip to enable it when the statusbar is off.
+
+```json
+// ~/.pi/agent/settings.json
+{
+  "xai": {
+    "text": {
+      "usageStatus": true
+    }
+  }
+}
+```
 
 Subscription credits only — no split by product (API vs Build vs chat).
 
@@ -169,17 +190,11 @@ Among Grok models, **only Composer is text-only**. 4.5 / 4.3 / Build / 4.20 take
 
 Config: `~/.pi/xai-vision.json` · Cache: `~/.pi/xai-vision-cache.json`
 
-### Web search modes
+### Agentic server tools (Responses API)
 
-| `xai.text.webSearch` | On `grok-build` |
-| --- | --- |
-| `native` (**default**) | xAI server-side `web_search` only |
-| `web-access` | Cursor `WebSearch` via [pi-web-access](https://www.npmjs.com/package/pi-web-access) |
-| `both` | Native agentic **and** client `WebSearch` |
+Default on for `grok-*` chat: injects server-side `{ type: "web_search" | "x_search" | "code_interpreter" }` **alongside** Pi’s local tools (`read`, `bash`, …). Opt out: `xai.text.agentic: false`. Custom list: `xai.text.agenticTools`.
 
-```bash
-pi install npm:pi-web-access   # only if you use web-access / both
-```
+Local coding tools are Pi’s (not Grok Build’s `read_file` / `search_replace` names).
 
 ---
 
@@ -188,12 +203,11 @@ pi install npm:pi-web-access   # only if you use web-access / both
 On every `grok-*` chat request:
 
 1. Strip OpenAI-only fields that xAI rejects  
-2. Merge native built-ins with Pi tools  
+2. Merge server-side built-ins with Pi client tools  
 3. Normalize empty `content` and system → `instructions`  
 4. Convert local image paths to data URIs  
 5. Set `prompt_cache_key` (Pi session id)  
-6. On CLI proxy: strip `reasoning.encrypted_content` (proxy-incompatible)  
-7. On `api.x.ai`: request encrypted reasoning for reasoning models  
+6. Request `reasoning.encrypted_content` on reasoning models (api + CLI proxy)  
 
 ---
 
@@ -212,11 +226,10 @@ npm run verify:deps   # undici / ws / protobufjs pins until upstream is fixed
 | `xai-provider.ts` | Model catalog + provider registration |
 | `xai-oauth.ts` | OAuth, token refresh, `/xai-usage` |
 | `xai-config.ts` | Settings resolution |
-| `xai-stream.ts` | CLI proxy headers + stream path |
+| `xai-stream.ts` | CLI proxy headers |
 | `xai-images.ts` | Image path → data URI |
-| `xai-tool-shims.ts` | Grep / Glob aliases |
+| `xai-image-gen.ts` | Imagine `image_gen` / `image_edit` |
 | `xai-vision.ts` | Text-only vision routing |
-| `xai-web-search-*.ts` | Optional pi-web-access bridge |
 
 See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 

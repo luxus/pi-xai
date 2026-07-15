@@ -25,6 +25,11 @@
     "assets"
   ],
   "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./xai-oauth": "./xai-oauth.ts"
+  },
   "scripts": {
     "build": "echo 'nothing to build'",
     "check": "tsgo --noEmit",
@@ -43,13 +48,7 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.80.0",
-    "@earendil-works/pi-coding-agent": ">=0.80.0",
-    "pi-web-access": "*"
-  },
-  "peerDependenciesMeta": {
-    "pi-web-access": {
-      "optional": true
-    }
+    "@earendil-works/pi-coding-agent": ">=0.80.0"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.80.6",

@@ -1,11 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
-/** Default: public xAI API (encrypted reasoning, full Responses surface). */
+/** Public xAI API (API key / encrypted reasoning; override when needed). */
 export const XAI_API_BASE = "https://api.x.ai/v1";
 
-/** Optional: Grok CLI subscription proxy (Composer/Build catalog; strips encrypted reasoning). */
+/** Default: Grok CLI subscription proxy (catalog + OAuth; encrypted reasoning with CLI headers). */
 export const XAI_CLI_BASE = "https://cli-chat-proxy.grok.com/v1";
 
 export const USER_PI_SETTINGS_PATH = resolve(homedir(), ".pi/agent/settings.json");
@@ -61,9 +61,8 @@ export function resolveXaiConfig(): ResolvedXaiConfig {
 
   return {
     xai: {
-      // Default public API: multi-turn encrypted reasoning works.
-      // Override with XAI_CLI_BASE for Grok CLI catalog / version-gate traffic.
-      baseUrl: getString(mergedXai, "baseUrl") || XAI_API_BASE,
+      // Default CLI proxy (subscription catalog). Override with XAI_API_BASE for public API keys.
+      baseUrl: getString(mergedXai, "baseUrl") || XAI_CLI_BASE,
       text: { ...textUser, ...textProject },
     },
   };
@@ -93,40 +92,7 @@ export function grokWantsEncryptedReasoningInclude(model: string): boolean {
   return grokSupportsReasoningEffort(name) || name.includes("reasoning");
 }
 
-/**
- * How web search is provided while using grok-build / agentic xAI tools.
- *
- * - `native` (default): xAI server-side `web_search` only. Leave pi-web-access alone
- *   so other models can still use its client `web_search` if installed.
- * - `web-access`: replace native agentic `web_search` with Cursor `WebSearch`
- *   (requires `pi install npm:pi-web-access`).
- * - `both`: keep native agentic `web_search` and also activate `WebSearch`.
- *
- * Set via `xai.text.webSearch` in `~/.pi/agent/settings.json` or project settings.
- */
-export type XaiWebSearchMode = "native" | "web-access" | "both";
-
-export function getWebSearchMode(config: ResolvedXaiConfig = resolveXaiConfig()): XaiWebSearchMode {
-  const raw = config.xai.text?.webSearch;
-  if (typeof raw !== "string") return "native";
-  const v = raw.trim().toLowerCase();
-  if (v === "web-access" || v === "web_access" || v === "client" || v === "pi-web-access") {
-    return "web-access";
-  }
-  if (v === "both") return "both";
-  return "native";
-}
-
-/** Activate Cursor WebSearch (pi-web-access) for grok-build. */
-export function wantsClientWebSearch(mode: XaiWebSearchMode = getWebSearchMode()): boolean {
-  return mode === "web-access" || mode === "both";
-}
-
-/** Inject xAI server-side web_search in agentic mode. */
-export function wantsNativeWebSearch(mode: XaiWebSearchMode = getWebSearchMode()): boolean {
-  return mode === "native" || mode === "both";
-}
-
+/** Server-side Responses builtins merged into grok-* chat (default on). */
 export function getAgenticConfig(config: ResolvedXaiConfig): {
   enabled: boolean;
   tools: string[];
@@ -139,22 +105,14 @@ export function getAgenticConfig(config: ResolvedXaiConfig): {
   }
 
   const toolsSetting = text?.agenticTools;
-  let tools: string[];
   if (
     Array.isArray(toolsSetting) &&
     toolsSetting.every((t): t is string => typeof t === "string")
   ) {
-    tools = [...toolsSetting];
-  } else {
-    tools = ["web_search", "x_search", "code_interpreter"];
+    return { enabled: true, tools: [...toolsSetting] };
   }
 
-  // Optional replace: drop native server-side web_search when user chose web-access only.
-  if (!wantsNativeWebSearch(getWebSearchMode(config))) {
-    tools = tools.filter((t) => t !== "web_search");
-  }
-
-  return { enabled: true, tools };
+  return { enabled: true, tools: ["web_search", "x_search", "code_interpreter"] };
 }
 
 /**
@@ -165,4 +123,31 @@ export function isMultiAgentToolEnabled(config: ResolvedXaiConfig = resolveXaiCo
   const v = config.xai.text?.multiAgent;
   if (v === false || v === "false") return false;
   return true;
+}
+
+/** Imagine tools in pi-xai. On by default; `xai.text.imageGen: false` disables. */
+export function isImageGenEnabled(config: ResolvedXaiConfig = resolveXaiConfig()): boolean {
+  const v = config.xai.text?.imageGen;
+  return v !== false && v !== "false";
+}
+
+/** Footer quota status. Off by default; `xai.text.usageStatus: true` or `/xai-usage statusbar`. */
+export function isUsageStatusEnabled(config: ResolvedXaiConfig = resolveXaiConfig()): boolean {
+  const v = config.xai.text?.usageStatus;
+  return v === true || v === "true";
+}
+
+/** Persist `xai.text.usageStatus` in the user Pi settings file. */
+export function setUsageStatusEnabled(
+  enabled: boolean,
+  settingsPath = USER_PI_SETTINGS_PATH,
+): void {
+  const root = readJsonRecord(settingsPath);
+  const xai = isRecord(root.xai) ? { ...root.xai } : {};
+  const text = isRecord(xai.text) ? { ...xai.text } : {};
+  text.usageStatus = enabled;
+  xai.text = text;
+  root.xai = xai;
+  mkdirSync(dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, `${JSON.stringify(root, null, 2)}\n`, "utf8");
 }

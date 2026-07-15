@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveXaiConfig } from "./xai-config.ts";
 import { loginXai, refreshXaiToken, getXaiApiKeyFromCredentials } from "./xai-oauth.ts";
-import { grokCliModelHeaders, isGrokCliProxyBaseUrl, streamGrokCli } from "./xai-stream.ts";
+import { grokCliModelHeaders, isGrokCliProxyBaseUrl } from "./xai-stream.ts";
 
 // ─── Cost constants ($/M tokens) — estimates for pi UI, not subscription credits ─
 
@@ -26,7 +26,8 @@ export interface GrokBuildModelSpec {
 const GROK_BUILD_MODEL_SPECS: GrokBuildModelSpec[] = [
   {
     id: "grok-composer-2.5-fast",
-    name: "Composer 2.5 Fast",
+    // Live /v1/models catalog name (models_cache.json)
+    name: "Composer 2.5",
     reasoning: false,
     contextWindow: 200_000,
     maxTokens: 30_000,
@@ -45,7 +46,8 @@ const GROK_BUILD_MODEL_SPECS: GrokBuildModelSpec[] = [
     id: "grok-build",
     name: "Grok Build",
     reasoning: true,
-    contextWindow: 512_000,
+    // Official default_models.json: context_window 500000
+    contextWindow: 500_000,
     maxTokens: 30_000,
     input: ["text", "image"],
     cost: COST_BUILD,
@@ -140,9 +142,24 @@ export function registerXaiProvider(api: ExtensionAPI) {
       cost: m.cost,
       contextWindow: m.contextWindow,
       maxTokens: m.maxTokens,
-      // Carry CLI headers on the model so tool-continuation turns still pass the version gate.
+      // Carry static CLI headers on the model so tool-continuation turns still pass the version gate.
+      // Dynamic x-grok-conv-id is injected via before_provider_headers (see registerGrokCliConvHeaders).
       ...(useCliHeaders ? { headers: grokCliModelHeaders(m.id) } : {}),
     })),
-    streamSimple: streamGrokCli as any,
+  });
+}
+
+/**
+ * Scope conversation affinity headers to Grok Build CLI-proxy requests only.
+ * Prefer this over a custom streamSimple (which pi-ai can clobber when re-registering
+ * the default openai-responses streamer). Mirrors kenryu42/pi-grok-cli.
+ */
+export function registerGrokCliConvHeaders(api: ExtensionAPI) {
+  api.on("before_provider_headers", (event, ctx) => {
+    if (ctx.model?.provider !== "grok-build") return;
+    if (!isGrokCliProxyBaseUrl(ctx.model.baseUrl)) return;
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (!sessionId) return;
+    event.headers["x-grok-conv-id"] = sessionId;
   });
 }

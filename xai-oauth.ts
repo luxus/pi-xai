@@ -23,6 +23,7 @@ import { dirname, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { createInterface } from "node:readline";
+import { GROK_CLI_VERSION } from "./xai-stream.ts";
 
 // =============================================================================
 // Constants (match official Grok CLI / Hermes exactly)
@@ -32,7 +33,9 @@ export const XAI_OAUTH_ISSUER = "https://auth.x.ai";
 export const XAI_OAUTH_DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code";
 export const XAI_OAUTH_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 export const XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
-export const XAI_OAUTH_SCOPE = "openid profile email offline_access grok-cli:access api:access";
+// Official default_oauth2_scopes (xai-org/grok-build auth/config.rs).
+export const XAI_OAUTH_SCOPE =
+  "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
 export const XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 3600; // 1h — Hermes febdddb41 (6h tokens, refresh early)
 
 // PKCE / Web OAuth constants (browser redirect flow support)
@@ -611,11 +614,17 @@ async function requestDeviceCode(): Promise<DeviceCodeResponse> {
   const body = new URLSearchParams({
     client_id: XAI_OAUTH_CLIENT_ID,
     scope: XAI_OAUTH_SCOPE,
+    referrer: "grok-build",
   });
 
+  // Match official device_code.rs: version + surface headers + referrer form field.
   const res = await fetch(XAI_OAUTH_DEVICE_CODE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "x-grok-client-version": GROK_CLI_VERSION,
+      "x-grok-client-surface": "cli",
+    },
     body: body.toString(),
   });
 
@@ -650,7 +659,11 @@ async function pollDeviceToken(deviceCode: string): Promise<{
 
   const res = await fetch(XAI_OAUTH_TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "x-grok-client-version": GROK_CLI_VERSION,
+      "x-grok-client-surface": "cli",
+    },
     body: body.toString(),
   });
 
@@ -1035,21 +1048,39 @@ export interface BillingUsage {
 /** @deprecated use BillingUsage — kept for siblings that imported the old name */
 export type GrokBuildBilling = BillingUsage;
 
-const RESET_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
+const RESET_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
-  timeZoneName: "short",
 });
 
-const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
+const RESET_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+});
+
+const RESET_DATE_YEAR_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+const LOCAL_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const USAGE_BAR_WIDTH = 20;
+const USAGE_LABEL_WIDTH = 28;
 
 function billingHeaders(token: string): Record<string, string> {
+  // Official extensions/billing.rs proxy headers.
   return {
     authorization: `Bearer ${token}`,
     "x-xai-token-auth": "xai-grok-cli",
+    "x-grok-client-version": GROK_CLI_VERSION,
+    "x-grok-client-mode": "interactive",
     accept: "application/json",
   };
 }
@@ -1104,14 +1135,112 @@ function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
   return { creditUsagePercent, billingPeriodEnd };
 }
 
-function formatReset(iso: string): string {
-  const parts = RESET_FORMATTER.formatToParts(new Date(iso));
-  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  const hour = part("hour") === "24" ? "00" : part("hour");
-  return `${part("month")} ${part("day")}, ${hour}:${part("minute")} ${part("timeZoneName")} ${LOCAL_TIME_ZONE}`;
+function clampPercent(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-const detail = (label: string, value: string) => `      ${label.padEnd(9)}  ${value}`;
+/** Codex-style remaining bar: filled = % left. */
+export function usageProgressBar(percentLeft: number, width = USAGE_BAR_WIDTH): string {
+  const left = clampPercent(percentLeft);
+  const filled = Math.round((left / 100) * width);
+  return `[${"█".repeat(filled)}${"░".repeat(width - filled)}]`;
+}
+
+/** Compact reset clock: "13:57" same day, "00:10 on 21 May" otherwise (local time). */
+function formatResetShort(iso: string, now = new Date()): string {
+  const date = new Date(iso);
+  const timeParts = RESET_TIME_FORMATTER.formatToParts(date);
+  const part = (parts: Intl.DateTimeFormatPart[], type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  const hour = part(timeParts, "hour") === "24" ? "00" : part(timeParts, "hour");
+  const minute = part(timeParts, "minute");
+  const time = `${hour}:${minute}`;
+
+  if (LOCAL_DAY_FORMATTER.format(date) === LOCAL_DAY_FORMATTER.format(now)) {
+    return time;
+  }
+
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const day = sameYear ? RESET_DATE_FORMATTER.format(date) : RESET_DATE_YEAR_FORMATTER.format(date);
+  return `${time} on ${day}`;
+}
+
+/**
+ * Compact remaining time without the "in " prefix: `45m`, `2h 15m`, `3d 4h`, or `now`.
+ * Drops minutes once days are present to keep the line compact.
+ */
+export function formatDurationLeft(iso: string, now = new Date()): string {
+  const ms = new Date(iso).getTime() - now.getTime();
+  if (!Number.isFinite(ms)) return "?";
+  if (ms <= 0) return "now";
+
+  const totalMin = Math.floor(ms / 60_000);
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (days === 0 && (mins > 0 || parts.length === 0)) parts.push(`${mins}m`);
+  return parts.join(" ");
+}
+
+/** Human countdown until reset: `in 45m`, `in 2h 15m`, `in 3d 4h`, or `now` if past. */
+export function formatDurationUntil(iso: string, now = new Date()): string {
+  const left = formatDurationLeft(iso, now);
+  if (left === "now" || left === "?") return left;
+  return `in ${left}`;
+}
+
+/** Tighter of monthly/weekly remaining — good for a single footer status. */
+export function pickTighterUsageLimit(usage: BillingUsage): {
+  percentLeft: number;
+  resetIso: string;
+  source: "monthly" | "weekly";
+} {
+  const { monthlyLimit, used, billingPeriodEnd } = usage.monthly;
+  const monthlyUsedPct = monthlyLimit > 0 ? (used / monthlyLimit) * 100 : used > 0 ? 100 : 0;
+  const monthlyLeft = clampPercent(100 - monthlyUsedPct);
+
+  if (!usage.weekly) {
+    return { percentLeft: monthlyLeft, resetIso: billingPeriodEnd, source: "monthly" };
+  }
+
+  const weeklyLeft = clampPercent(100 - usage.weekly.creditUsagePercent);
+  if (weeklyLeft <= monthlyLeft) {
+    return {
+      percentLeft: weeklyLeft,
+      resetIso: usage.weekly.billingPeriodEnd,
+      source: "weekly",
+    };
+  }
+  return { percentLeft: monthlyLeft, resetIso: billingPeriodEnd, source: "monthly" };
+}
+
+/** Footer status: `Grok 40% left · 3d 12h` (tighter of monthly/weekly). */
+export function formatUsageStatusText(usage: BillingUsage, now = new Date()): string {
+  const { percentLeft, resetIso } = pickTighterUsageLimit(usage);
+  return `Grok ${percentLeft}% left · ${formatDurationLeft(resetIso, now)}`;
+}
+
+function formatResetWithCountdown(iso: string, now = new Date()): string {
+  return `${formatResetShort(iso, now)} · ${formatDurationUntil(iso, now)}`;
+}
+
+function formatLimitLine(
+  label: string,
+  percentLeft: number,
+  resetIso: string,
+  extra?: string,
+  now = new Date(),
+): string {
+  const left = clampPercent(percentLeft);
+  const bar = usageProgressBar(left);
+  const extraPart = extra ? ` · ${extra}` : "";
+  return `  ${label.padEnd(USAGE_LABEL_WIDTH)}${bar} ${left}% left${extraPart} (resets ${formatResetWithCountdown(resetIso, now)})`;
+}
 
 /**
  * Fetch monthly + weekly Grok Build usage for a subscription OAuth token.
@@ -1177,48 +1306,79 @@ export async function fetchGrokBuildBilling(accessToken: string): Promise<Billin
   return fetchBillingUsage(accessToken);
 }
 
-/** Grok CLI `/usage`-style lines + web link. */
-export function formatQuota(usage: BillingUsage | undefined): string[] {
+export const USAGE_STATUSBAR_TIP =
+  "Tip: /xai-usage statusbar — show compact usage in the footer (Grok models)";
+
+/**
+ * Codex-style Grok Build usage lines + web link.
+ *
+ *   >_ Grok Build Usage
+ *   Visit https://grok.com/?_s=usage for up-to-date
+ *   information on rate limits and credits
+ *     Monthly limit:  [████████████░░░░░░░░] 62% left · 93,560 cr (resets 13:57 · in 2h 15m)
+ *     Weekly limit:   [█████████████░░░░░░░] 64% left (resets 14:37 · in 2h 55m)
+ *
+ *   Tip: /xai-usage statusbar — …   (when statusbar is off)
+ */
+export function formatQuota(
+  usage: BillingUsage | undefined,
+  options?: { now?: Date; showStatusbarTip?: boolean },
+): string[] {
+  const now = options?.now ?? new Date();
+  const header = [
+    ">_ Grok Build Usage",
+    "",
+    `Visit ${GROK_USAGE_PAGE_URL} for up-to-date`,
+    "information on rate limits and credits",
+    "",
+  ];
+
   if (!usage) {
-    return [
-      "Usage:",
+    const empty = [
+      ...header,
       "  no billing data available — run /login grok-build (or import grok CLI login)",
-      "",
-      `Details: ${GROK_USAGE_PAGE_URL}`,
     ];
+    if (options?.showStatusbarTip) empty.push("", USAGE_STATUSBAR_TIP);
+    return empty;
   }
 
-  const monthlyPercent = Math.round((usage.monthly.used / usage.monthly.monthlyLimit) * 100);
+  const { monthlyLimit, used, billingPeriodEnd } = usage.monthly;
+  const remaining = Math.max(0, monthlyLimit - used);
+  const monthlyUsedPct = monthlyLimit > 0 ? (used / monthlyLimit) * 100 : used > 0 ? 100 : 0;
+  const monthlyLeftPct = 100 - monthlyUsedPct;
+  const creditExtra = `${remaining.toLocaleString()} / ${monthlyLimit.toLocaleString()} cr`;
+
   const lines = [
-    "Usage:",
-    "  Monthly",
-    detail(
-      "Credits",
-      `${usage.monthly.used.toLocaleString()} / ${usage.monthly.monthlyLimit.toLocaleString()} used  ${monthlyPercent}%`,
-    ),
-    detail(
-      "Remaining",
-      `${(usage.monthly.monthlyLimit - usage.monthly.used).toLocaleString()} credits`,
-    ),
-    detail("Reset", formatReset(usage.monthly.billingPeriodEnd)),
+    ...header,
+    formatLimitLine("Monthly limit:", monthlyLeftPct, billingPeriodEnd, creditExtra, now),
   ];
 
   if (usage.weekly) {
+    const weeklyLeftPct = 100 - usage.weekly.creditUsagePercent;
     lines.push(
-      "",
-      "  Weekly",
-      detail("Limit", `${Math.round(usage.weekly.creditUsagePercent)}% used`),
-      detail("Reset", formatReset(usage.weekly.billingPeriodEnd)),
+      formatLimitLine(
+        "Weekly limit:",
+        weeklyLeftPct,
+        usage.weekly.billingPeriodEnd,
+        undefined,
+        now,
+      ),
     );
   }
 
-  lines.push("", `Details: ${GROK_USAGE_PAGE_URL}`);
+  if (options?.showStatusbarTip) {
+    lines.push("", USAGE_STATUSBAR_TIP);
+  }
+
   return lines;
 }
 
 /** Single string for Pi notify (same content as formatQuota). */
-export function formatGrokBuildBilling(usage: BillingUsage): string {
-  return formatQuota(usage).join("\n");
+export function formatGrokBuildBilling(
+  usage: BillingUsage,
+  options?: { now?: Date; showStatusbarTip?: boolean },
+): string {
+  return formatQuota(usage, options).join("\n");
 }
 
 // =============================================================================

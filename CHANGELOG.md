@@ -5,12 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Isolated Imagine tools in pi-xai** — `image_gen` + `image_edit` only (no video/studio). Official payload; opt out `xai.text.imageGen: false`.
+
+### Changed
+
+- **Default base URL is CLI proxy** — `https://cli-chat-proxy.grok.com/v1` (subscription catalog + OAuth). Override with `xai.baseUrl: "https://api.x.ai/v1"` for public API keys.
+- **Tests streamlined** — protocol contracts (headers, encrypted include, defaults, catalog) + lean OAuth/billing; dropped Hermes-era / shim suites.
+
+### Fixed
+
+- **Encrypted reasoning on CLI proxy** — stop stripping `include: reasoning.encrypted_content` for `cli-chat-proxy`. Official Grok Build always requests it (`store:false` + client replay); live probe returns encrypted blobs and multi-turn replay works with CLI headers. Proxy needs proper client headers (we already send them).
+- **Align with open-source Grok Build** — client `0.2.101` / `grok-shell`, proxy auth headers, OAuth scopes + device-code referrer/surface, `grok-build` 500k context.
+- **CLI proxy conv-id** via `before_provider_headers` (no custom `streamSimple`).
+
+### Removed
+
+- Dead `streamGrokCli` wrapper (headers live on models + hook).
+- **Cursor/Composer tool shims** — `Grep`/`Glob` aliases, write/edit arg remaps, optional `WebSearch` + pi-web-access bridge (`xai-tool-shims`, `xai-web-search-*`). Use Pi native tools + agentic server `web_search` (default on). Dropped optional `pi-web-access` peer and `xai.text.webSearch` modes.
+
 ## [0.15.1] - 2026-07-11
 
 ### Changed
 
 - **Default base URL is `api.x.ai` again** — restores multi-turn `reasoning.encrypted_content` (CLI proxy still available via `xai.baseUrl: "https://cli-chat-proxy.grok.com/v1"`, which strips that include).
 - **`xai_multi_agent` on by default** — opt out with `xai.text.multiAgent: false`. Still uses the 4.20 multi-agent model id until a newer multi-agent SKU lands.
+- **`/xai-usage` Codex-style output** — progress bars for monthly/weekly remaining (`% left`), compact local reset times with countdown (`in 2h 15m` / `in 3d 4h`), remaining credit counts, and link to `https://grok.com/?_s=usage`.
+- **Optional footer usage status** — `/xai-usage statusbar` (or `xai.text.usageStatus: true`) toggles `Grok N% left · 3d 12h` in the Pi status bar when a Grok model is selected; off by default. `/xai-usage` tips the toggle when disabled.
 
 ## [0.15.0] - 2026-07-11
 
