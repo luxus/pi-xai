@@ -7,9 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **README** — full rewrite for flavor-pack direction; companion extensions for Grok-like features we do not reimplement ([pi-subagents](https://github.com/edxeth/pi-subagents), [pi-tasks](https://github.com/edxeth/pi-tasks), [pi-schedule-prompt](https://github.com/tintinweb/pi-schedule-prompt), [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)).
+## [0.17.0] - 2026-07-16
 
 ### Added
 
@@ -22,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **README rewrite** — documents Grok Build protocol alignment, removed Cursor shims, Imagine tools, and the roadmap: provider/OAuth is transitional as Pi gains native Grok; package focus shifts to Grok Build / xAI tools and QoL.
+- **README** — flavor-pack direction; companion extensions for Grok-like features we do not reimplement ([pi-subagents](https://github.com/edxeth/pi-subagents), [pi-tasks](https://github.com/edxeth/pi-tasks), [pi-schedule-prompt](https://github.com/tintinweb/pi-schedule-prompt), [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)). Provider/OAuth documented as transitional as Pi gains native Grok.
 
 ### Fixed
 

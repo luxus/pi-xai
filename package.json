@@ -1,7 +1,7 @@
 {
   "name": "pi-xai",
-  "version": "0.16.2",
-  "description": "xAI / Grok extras for Pi — Grok Build protocol, Imagine tools, usage QoL, agentic APIs (provider transitional)",
+  "version": "0.17.0",
+  "description": "xAI / Grok extras for Pi \u2014 Grok Build protocol, Imagine tools, usage QoL, agentic APIs (provider transitional)",
   "keywords": [
     "coding-plan",
     "grok",
