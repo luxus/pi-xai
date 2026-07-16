@@ -55,7 +55,7 @@ pi install npm:pi-xai
 | `/plan` | Plan mode (`on` / `off` / `status` / `show`); tools `enter_plan_mode` / `exit_plan_mode` |
 | `/imagine` | Image gen — prompt passed **verbatim** to `image_gen` |
 | `/imagine-video` | Video workflow (`image_gen` → `image_to_video`) |
-| `/xai-suggest` | Next-prompt ghost (`on` / `off` / `clear`); **Tab** commits |
+| `/xai-suggest` | Next-prompt ghost (`on` / `off` / `clear`); **Tab** commits (remap via `~/.pi/agent/keybindings.json`: `"ext.pi-xai.promptSuggest.accept": "ctrl+right"`, then `/reload`) |
 | `/xai-usage` | Monthly/weekly subscription bars (`% left`) + reset |
 | `/xai-usage statusbar` | Footer `Grok 40% left · 3d 12h` (Grok models only) |
 | `/xai-vision:status` | Vision routing for text-only models (Composer default) |

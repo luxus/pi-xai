@@ -10,7 +10,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getEffectiveXaiApiKey } from "./xai-oauth.ts";
-import { resolveXaiConfig } from "./xai-config.ts";
+import { PROMPT_SUGGEST_ACCEPT_ID, resolveKeybindingKey, resolveXaiConfig } from "./xai-config.ts";
 import { xaiRequestHeaders } from "./xai-stream.ts";
 
 const SUGGEST_SYSTEM =
@@ -299,14 +299,21 @@ export function registerXaiPromptSuggest(api: ExtensionAPI): void {
     },
   });
 
-  api.registerShortcut("tab", {
-    description: "Accept predicted next prompt in textbox",
-    handler: async (ctx) => {
-      lastUi = ctx.ui;
-      if (!isPromptSuggestEnabled() || !suggestion || !ghostInEditor) return;
-      acceptInTextbox();
-    },
-  });
+  // Pi core ignores ext.* in keybindings.json; we resolve the physical key ourselves.
+  // Sync false falls through so default key still does autocomplete when no ghost.
+  const acceptKey = resolveKeybindingKey(PROMPT_SUGGEST_ACCEPT_ID, "tab");
+  api.registerShortcut(
+    acceptKey as "tab",
+    {
+      id: PROMPT_SUGGEST_ACCEPT_ID,
+      description: "Accept predicted next prompt in textbox",
+      handler: (ctx) => {
+        lastUi = ctx.ui;
+        if (!isPromptSuggestEnabled() || !suggestion || !ghostInEditor) return false;
+        acceptInTextbox();
+      },
+    } as { description?: string; handler: (ctx: ExtensionContext) => void | Promise<void> },
+  );
 
   // Submit: strip dim ANSI so the model never sees escape codes.
   api.on("input", async (event) => {

@@ -10,6 +10,10 @@ export const XAI_CLI_BASE = "https://cli-chat-proxy.grok.com/v1";
 
 export const USER_PI_SETTINGS_PATH = resolve(homedir(), ".pi/agent/settings.json");
 export const PROJECT_PI_SETTINGS_PATH = resolve(process.cwd(), ".pi/settings.json");
+export const USER_PI_KEYBINDINGS_PATH = resolve(homedir(), ".pi/agent/keybindings.json");
+
+/** Remap in ~/.pi/agent/keybindings.json (Pi core ignores ext.* ids; we read them ourselves). */
+export const PROMPT_SUGGEST_ACCEPT_ID = "ext.pi-xai.promptSuggest.accept";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -41,6 +45,23 @@ function getString(record: JsonRecord, key: string): string | undefined {
 
 export function getPiSettingsPaths(): { user: string; project: string } {
   return { user: USER_PI_SETTINGS_PATH, project: PROJECT_PI_SETTINGS_PATH };
+}
+
+/** First key bound to `id` in keybindings.json, else `fallback`. Pi does not remap ext.* yet. */
+export function resolveKeybindingKey(
+  id: string,
+  fallback: string,
+  path = USER_PI_KEYBINDINGS_PATH,
+): string {
+  const raw = readJsonRecord(path);
+  const v = raw[id];
+  if (typeof v === "string" && v.trim()) return v.trim().toLowerCase();
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      if (typeof item === "string" && item.trim()) return item.trim().toLowerCase();
+    }
+  }
+  return fallback;
 }
 
 export interface ResolvedXaiConfig {
