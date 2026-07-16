@@ -30,7 +30,8 @@ const SUGGEST_SYSTEM =
   "Stay silent if not obvious: reply with the single word NONE.\n" +
   "Format: 2-12 words, user style. ONLY the suggestion text or NONE.";
 
-const DEFAULT_MODEL = "grok-4.5";
+/** Fast text-only model — suggestion calls are throwaway, not session work. */
+const DEFAULT_MODEL = "grok-composer-2.5-fast";
 const MAX_CHARS = 120;
 const MAX_WORDS = 16;
 const TRANSCRIPT_BUDGET = 12_000;
@@ -166,7 +167,8 @@ function paintWidget(lines: string[] | undefined): void {
 function showSuggestion(text: string): void {
   suggestion = text;
   dismissed = false;
-  paintWidget([`💡 Tab → ${text}`]);
+  // Outside the textbox (Grok-style ghost lives above input until Tab accepts).
+  paintWidget([`💡  ${text}`, `   Tab to use · Esc-style: /xai-suggest clear`]);
 }
 
 async function fetchSuggestion(transcript: string): Promise<string | undefined> {
