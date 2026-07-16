@@ -29,9 +29,10 @@
 | Keep / grow | Drop when Pi is native |
 | --- | --- |
 | Imagine `image_gen` / `image_edit` (+ video later) | Provider catalog / model registration |
-| `/xai-usage` + optional statusbar | Login / OAuth plumbing (if Pi owns auth) |
-| Agentic xAI tools, `xai_x_search`, multi-agent | Payload/header shims only needed for our provider |
-| Composer vision routing, session QoL | Cursor/Composer name shims (**already removed**) |
+| `/goal`, `/plan`, prompt ghost suggestions | Login / OAuth plumbing (if Pi owns auth) |
+| `/xai-usage` + optional statusbar | Payload/header shims only needed for our provider |
+| Agentic xAI tools, `xai_x_search`, multi-agent | Cursor/Composer name shims (**already removed**) |
+| Composer vision routing, session QoL | |
 
 Sibling packages: **[pi-xai-voice](https://github.com/luxus/pi-xai-voice)** (TTS/STT, Telegram voice). **pi-xai-imagine** is being folded in (thin Imagine already lives here).
 
