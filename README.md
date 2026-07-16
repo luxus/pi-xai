@@ -222,6 +222,7 @@ npm run verify:deps
 | `xai-stream.ts` | CLI proxy headers |
 | `xai-images.ts` | Image path → data URI |
 | `xai-image-gen.ts` | Imagine tools |
+| `xai-goal.ts` | `/goal` + `update_goal` |
 | `xai-vision.ts` | Text-only vision routing |
 | `xai-usage-status.ts` | Footer quota |
 
