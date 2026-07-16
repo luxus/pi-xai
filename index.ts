@@ -16,6 +16,8 @@ import { isGrokCliProxyBaseUrl, xaiRequestHeaders } from "./xai-stream.ts";
 import { registerXaiImageGen } from "./xai-image-gen.ts";
 import { registerXaiVision } from "./xai-vision.ts";
 import { registerXaiGoal } from "./xai-goal.ts";
+import { registerXaiPlanMode } from "./xai-plan-mode.ts";
+import { registerXaiPromptSuggest } from "./xai-prompt-suggest.ts";
 import {
   clearUsageStatus,
   isGrokModel,
@@ -424,6 +426,12 @@ export default async function (api: ExtensionAPI) {
 
   // Grok Build–style /goal + update_goal (lean: no classifier harness).
   registerXaiGoal(api);
+
+  // Grok Build plan mode: /plan + enter_plan_mode / exit_plan_mode.
+  registerXaiPlanMode(api);
+
+  // Next-prompt ghost: predict after each turn; Tab accepts (/xai-suggest off).
+  registerXaiPromptSuggest(api);
 
   // Optional footer status: Grok N% left · Nd Nh (Grok models only).
   registerXaiUsageStatus(api);

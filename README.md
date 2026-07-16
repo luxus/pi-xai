@@ -55,6 +55,8 @@ pi install npm:pi-xai
 | `/login grok-build` | OAuth (web / device / import `grok login`) |
 | `/model grok-build/…` | Catalog below |
 | `/goal <objective>` | Grok Build–style goal mode (`status` / `pause` / `resume` / `clear`) |
+| `/plan` | Plan mode on/off (`status` / `show`); tools `enter_plan_mode` / `exit_plan_mode` |
+| `/xai-suggest` | Next-prompt ghost after turns (`on` / `off` / `clear`); **Tab** accepts |
 | `/xai-usage` | Monthly/weekly subscription bars (`% left`) + reset |
 | `/xai-usage statusbar` | Footer `Grok 40% left · 3d 12h` (Grok models only) |
 | `/xai-vision:status` | Vision routing for text-only models (Composer default) |
@@ -124,6 +126,25 @@ Pi cost numbers are **per-token UI estimates**, not subscription credits. Real a
 ```
 
 Registers tool **`update_goal`** (`message` | `completed` | `blocked_reason`). No classifier/subagent harness — pursue until done.
+
+### Plan mode (Grok Build)
+
+```text
+/plan          # toggle
+/plan on|off|status|show
+```
+
+Tools **`enter_plan_mode`** / **`exit_plan_mode`** (official ids). Writes **`.pi/plan.md`**. While on: disables `edit`/`write`, allowlists read-only bash. Exit surfaces the plan for approval before implement.
+
+### Prompt ghost (next message)
+
+After each agent turn, predicts what you are likely to type next (Grok Build prompt-suggestions idea). Shown as `💡 Tab → …` above the editor; **Tab** inserts it.
+
+```text
+/xai-suggest on|off|status|clear
+```
+
+Disable: `XAI_PROMPT_SUGGESTIONS=0` or `/xai-suggest off`. Model: `XAI_PROMPT_SUGGESTIONS_MODEL` (default `grok-4.5`).
 
 ### Imagine (in-package)
 
@@ -223,6 +244,8 @@ npm run verify:deps
 | `xai-images.ts` | Image path → data URI |
 | `xai-image-gen.ts` | Imagine tools |
 | `xai-goal.ts` | `/goal` + `update_goal` |
+| `xai-plan-mode.ts` | `/plan` + enter/exit_plan_mode |
+| `xai-prompt-suggest.ts` | Next-prompt ghost |
 | `xai-vision.ts` | Text-only vision routing |
 | `xai-usage-status.ts` | Footer quota |
 

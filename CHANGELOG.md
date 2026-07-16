@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Grok Build–style goal mode** — `/goal <objective>` plus tool `update_goal` (progress / complete / blocked). Lean port without classifier harness; active-goal reminder on each turn.
+- **Plan mode** — `/plan [on|off|status|show]`, tools `enter_plan_mode` / `exit_plan_mode`, plan file `.pi/plan.md`, read-only tool set + bash allowlist while active.
+- **Prompt ghost suggestions** — after each turn, predict the next user message (small Responses call); show above editor; **Tab** accepts. Toggle: `/xai-suggest on|off` (env `XAI_PROMPT_SUGGESTIONS=0` disables).
 
 ### Changed
 
