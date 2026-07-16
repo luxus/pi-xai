@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **README** — full rewrite for flavor-pack direction; companion extensions for Grok-like features we do not reimplement ([pi-subagents](https://github.com/edxeth/pi-subagents), [pi-tasks](https://github.com/edxeth/pi-tasks), [pi-schedule-prompt](https://github.com/tintinweb/pi-schedule-prompt), [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)).
+
 ### Added
 
 - **Grok Build–style goal mode** — `/goal <objective>` plus tool `update_goal` (progress / complete / blocked). Lean port without classifier harness; active-goal reminder on each turn.
