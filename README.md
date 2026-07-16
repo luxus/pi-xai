@@ -145,7 +145,7 @@ After each agent turn, predicts what you are likely to type next (Grok Build pro
 /xai-suggest on|off|status|clear
 ```
 
-Shown **above** the editor only (not in the textbox) until you press **Tab**. Disable: `XAI_PROMPT_SUGGESTIONS=0` or `/xai-suggest off`. Model: `XAI_PROMPT_SUGGESTIONS_MODEL` (default **`grok-composer-2.5-fast`** for speed).
+Fills the **empty textbox** with dim ghost text after each turn (Composer model by default). **Tab** commits it to plain text; **Enter** sends it (ANSI stripped). Typing over it clears the ghost. Disable: `XAI_PROMPT_SUGGESTIONS=0` or `/xai-suggest off`. Model: `XAI_PROMPT_SUGGESTIONS_MODEL` (default **`grok-composer-2.5-fast`**).
 
 ### Imagine (in-package)
 

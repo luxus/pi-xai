@@ -1,11 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { isSafePlanBash } from "../xai-plan-mode.ts";
 import {
-  acceptSuggestion,
+  asGhostText,
   buildTranscript,
-  clearSuggestion,
   filterSuggestion,
-  ghostFor,
+  stripAnsi,
 } from "../xai-prompt-suggest.ts";
 
 describe("plan mode bash allowlist", () => {
@@ -21,21 +20,21 @@ describe("plan mode bash allowlist", () => {
   });
 });
 
-describe("prompt suggestion filter + ghost", () => {
+describe("prompt suggestion filter + ghost textbox", () => {
   test("filterSuggestion", () => {
     expect(filterSuggestion("NONE")).toBeUndefined();
     expect(filterSuggestion("run the tests")).toBe("run the tests");
     expect(filterSuggestion("yes")).toBe("yes");
-    expect(filterSuggestion("xyzzy")).toBeUndefined(); // single non-allowlist word
+    expect(filterSuggestion("xyzzy")).toBeUndefined();
     expect(filterSuggestion("Let me fix that")).toBeUndefined();
+    expect(filterSuggestion('"commit this"')).toBe("commit this");
   });
 
-  test("ghost progressive + accept", () => {
-    // inject via module by re-importing accept path through private state:
-    // use filter + simulate via acceptSuggestion after manually setting is hard;
-    // test pure progressive logic through ghostFor after we can't set private.
-    // Instead test buildTranscript + filter only fully.
-    expect(filterSuggestion('"commit this"')).toBe("commit this");
+  test("dim ghost wraps and strips", () => {
+    const g = asGhostText("run the tests");
+    expect(g).toContain("run the tests");
+    expect(g).not.toBe("run the tests");
+    expect(stripAnsi(g)).toBe("run the tests");
   });
 
   test("buildTranscript needs assistant", () => {
@@ -46,11 +45,5 @@ describe("prompt suggestion filter + ghost", () => {
       ]),
     ).toContain("Agent: done fixing");
     expect(buildTranscript([{ role: "user", content: "only user" }])).toBeUndefined();
-  });
-
-  test("clear is safe", () => {
-    clearSuggestion();
-    expect(ghostFor("")).toBeUndefined();
-    expect(acceptSuggestion("")).toBeUndefined();
   });
 });

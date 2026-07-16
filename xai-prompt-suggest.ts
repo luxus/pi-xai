@@ -1,8 +1,9 @@
 /**
- * Grok Build–style next-prompt ghost suggestions for Pi.
+ * Grok Build–style next-prompt ghost in the editor textbox.
  *
- * After a turn settles, predict the user's likely next message (small model).
- * Shown as a widget above the editor; Tab accepts into the editor.
+ * After a turn ends, predict the next user message (Composer by default).
+ * Fills the empty textbox with dim ghost text; Tab / Enter confirm as plain text.
+ * Typing any other key clears the ghost and starts fresh.
  *
  * Source: xai-org/grok-build prompt_suggest + prompt_suggestion controller.
  */
@@ -37,6 +38,10 @@ const MAX_WORDS = 16;
 const TRANSCRIPT_BUDGET = 12_000;
 const MSG_CAP = 800;
 
+const DIM = "\x1b[2;90m";
+const RESET = "\x1b[0m";
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
 const ONE_WORD = new Set([
   "yes",
   "yeah",
@@ -59,7 +64,8 @@ const ONE_WORD = new Set([
 let enabled = true;
 let suggestion = "";
 let generation = 0;
-let dismissed = false;
+/** True while the textbox shows dim ghost (not committed user input). */
+let ghostInEditor = false;
 let lastUi: ExtensionContext["ui"] | undefined;
 
 export function isPromptSuggestEnabled(): boolean {
@@ -81,25 +87,51 @@ export function getSuggestion(): string {
   return suggestion;
 }
 
+export function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "");
+}
+
+export function asGhostText(plain: string): string {
+  return `${DIM}${plain}${RESET}`;
+}
+
 export function clearSuggestion(): void {
+  const had = ghostInEditor;
   suggestion = "";
-  dismissed = false;
-  paintWidget(undefined);
+  ghostInEditor = false;
+  if (had && lastUi) {
+    try {
+      const cur = stripAnsi(lastUi.getEditorText?.() ?? "");
+      // Only wipe if still showing our ghost
+      if (!cur || cur === getSuggestion() || suggestion === "") {
+        // after clear suggestion is ""; wipe if editor matches previous ghost text only
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  // Always clear status/widget remnants
+  try {
+    lastUi?.setWidget?.("xai-prompt-suggest", undefined);
+  } catch {
+    /* ignore */
+  }
 }
 
-export function ghostFor(editorText: string): string | undefined {
-  if (!isPromptSuggestEnabled() || dismissed || !suggestion) return undefined;
-  if (!suggestion.startsWith(editorText)) return undefined;
-  const rest = suggestion.slice(editorText.length);
-  return rest || undefined;
-}
-
-export function acceptSuggestion(editorText: string): string | undefined {
-  const rest = ghostFor(editorText);
-  if (rest === undefined) return undefined;
-  const full = editorText + rest;
-  clearSuggestion();
-  return full;
+function clearEditorGhost(): void {
+  if (!ghostInEditor || !lastUi) {
+    ghostInEditor = false;
+    return;
+  }
+  try {
+    const cur = stripAnsi(lastUi.getEditorText?.() ?? "");
+    if (!suggestion || cur === suggestion || cur === "") {
+      lastUi.setEditorText("");
+    }
+  } catch {
+    /* ignore */
+  }
+  ghostInEditor = false;
 }
 
 export function filterSuggestion(raw: string): string | undefined {
@@ -155,20 +187,34 @@ function flattenContent(content: unknown): string {
     .join("\n");
 }
 
-function paintWidget(lines: string[] | undefined): void {
+function showInTextbox(text: string): void {
+  suggestion = text;
   if (!lastUi) return;
   try {
-    lastUi.setWidget("xai-prompt-suggest", lines, { placement: "aboveEditor" });
+    const cur = stripAnsi(lastUi.getEditorText?.() ?? "").trim();
+    // Only fill empty (or previous ghost) textbox — never clobber real draft.
+    if (cur && !ghostInEditor && cur !== text) return;
+    lastUi.setEditorText(asGhostText(text));
+    ghostInEditor = true;
+  } catch {
+    /* ignore */
+  }
+  // No separate widget — ghost lives in the textbox.
+  try {
+    lastUi.setWidget?.("xai-prompt-suggest", undefined);
   } catch {
     /* ignore */
   }
 }
 
-function showSuggestion(text: string): void {
-  suggestion = text;
-  dismissed = false;
-  // Outside the textbox (Grok-style ghost lives above input until Tab accepts).
-  paintWidget([`💡  ${text}`, `   Tab to use · Esc-style: /xai-suggest clear`]);
+function acceptInTextbox(): void {
+  if (!suggestion || !lastUi) return;
+  try {
+    lastUi.setEditorText(suggestion);
+  } catch {
+    /* ignore */
+  }
+  ghostInEditor = false;
 }
 
 async function fetchSuggestion(transcript: string): Promise<string | undefined> {
@@ -221,43 +267,65 @@ async function fetchSuggestion(transcript: string): Promise<string | undefined> 
 
 export function registerXaiPromptSuggest(api: ExtensionAPI): void {
   api.registerCommand("xai-suggest", {
-    description: "Prompt ghost: on | off | status | clear (predict next user message)",
+    description: "Prompt ghost in textbox: on | off | status | clear",
     async handler(args, ctx) {
       lastUi = ctx.ui;
       const sub = (args ?? "").trim().toLowerCase();
       if (sub === "off") {
         setPromptSuggestEnabled(false);
+        clearEditorIfGhost(ctx.ui);
         ctx.ui.notify("Prompt suggestions OFF", "info");
         return;
       }
       if (sub === "on") {
         setPromptSuggestEnabled(true);
-        ctx.ui.notify("Prompt suggestions ON (after each turn)", "info");
+        ctx.ui.notify("Prompt suggestions ON — ghost fills empty textbox after turns", "info");
         return;
       }
       if (sub === "clear") {
-        clearSuggestion();
+        clearEditorIfGhost(ctx.ui);
+        suggestion = "";
+        ghostInEditor = false;
         ctx.ui.notify("Suggestion cleared", "info");
         return;
       }
       ctx.ui.notify(
         `Prompt suggestions: ${isPromptSuggestEnabled() ? "on" : "off"}` +
-          (suggestion ? `\nCurrent: ${suggestion}` : "\nNo active suggestion"),
+          (suggestion
+            ? `\nGhost: ${suggestion}${ghostInEditor ? " (in textbox)" : ""}`
+            : "\nNo active ghost"),
         "info",
       );
     },
   });
 
   api.registerShortcut("tab", {
-    description: "Accept predicted next prompt (ghost)",
+    description: "Accept predicted next prompt in textbox",
     handler: async (ctx) => {
       lastUi = ctx.ui;
-      if (!isPromptSuggestEnabled() || !suggestion) return;
-      const editor = ctx.ui.getEditorText?.() ?? "";
-      const accepted = acceptSuggestion(editor);
-      if (accepted === undefined) return;
-      ctx.ui.setEditorText(accepted);
+      if (!isPromptSuggestEnabled() || !suggestion || !ghostInEditor) return;
+      acceptInTextbox();
     },
+  });
+
+  // Submit: strip dim ANSI so the model never sees escape codes.
+  api.on("input", async (event) => {
+    if (!ghostInEditor && !suggestion) return;
+    const plain = stripAnsi(event.text);
+    if (
+      ghostInEditor &&
+      suggestion &&
+      (plain === suggestion || plain === asGhostText(suggestion))
+    ) {
+      ghostInEditor = false;
+      return { action: "transform" as const, text: suggestion };
+    }
+    // User edited: still strip any leftover ANSI
+    if (plain !== event.text) {
+      ghostInEditor = false;
+      return { action: "transform" as const, text: plain };
+    }
+    ghostInEditor = false;
   });
 
   api.on("agent_end", async (event, ctx) => {
@@ -274,15 +342,34 @@ export function registerXaiPromptSuggest(api: ExtensionAPI): void {
     try {
       const next = await fetchSuggestion(transcript);
       if (gen !== generation) return;
-      if (next) showSuggestion(next);
-      else clearSuggestion();
+      if (next) showInTextbox(next);
+      else {
+        suggestion = "";
+        clearEditorIfGhost(ctx.ui);
+        ghostInEditor = false;
+      }
     } catch {
-      if (gen === generation) clearSuggestion();
+      if (gen === generation) {
+        suggestion = "";
+        ghostInEditor = false;
+      }
     }
   });
 
   api.on("session_start", () => {
-    clearSuggestion();
+    suggestion = "";
+    ghostInEditor = false;
     lastUi = undefined;
   });
+}
+
+function clearEditorIfGhost(ui: ExtensionContext["ui"]): void {
+  if (!ghostInEditor) return;
+  try {
+    const cur = stripAnsi(ui.getEditorText?.() ?? "");
+    if (!suggestion || cur === suggestion || cur === "") ui.setEditorText("");
+  } catch {
+    /* ignore */
+  }
+  ghostInEditor = false;
 }
