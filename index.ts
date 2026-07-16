@@ -18,6 +18,8 @@ import { registerXaiVision } from "./xai-vision.ts";
 import { registerXaiGoal } from "./xai-goal.ts";
 import { registerXaiPlanMode } from "./xai-plan-mode.ts";
 import { registerXaiPromptSuggest } from "./xai-prompt-suggest.ts";
+import { registerXaiVideoGen } from "./xai-video-gen.ts";
+import { registerXaiWebFetch } from "./xai-web-fetch.ts";
 import {
   clearUsageStatus,
   isGrokModel,
@@ -419,10 +421,16 @@ export default async function (api: ExtensionAPI) {
   // Inspired by kenryu42/pi-grok-cli — thanks @kenryu42.
   registerXaiVision(api);
 
-  // Isolated Imagine tools (image_gen / image_edit only — no video/studio).
+  // Isolated Imagine tools (image_gen / image_edit + /imagine).
   // Official Grok Build protocol. Opt out: xai.text.imageGen: false.
   // Dual-install: pi-xai-imagine skips image_gen when this package is present.
   registerXaiImageGen(api);
+
+  // image_to_video + /imagine-video (auto-off if pi-xai-imagine installed).
+  registerXaiVideoGen(api);
+
+  // Client web_fetch (SSRF-guarded).
+  registerXaiWebFetch(api);
 
   // Grok Build–style /goal + update_goal (lean: no classifier harness).
   registerXaiGoal(api);

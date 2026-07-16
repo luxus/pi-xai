@@ -169,8 +169,41 @@ export async function editImage(
   return { path: saveB64(b64, "edit"), model };
 }
 
+export function imagineUsageMessage(): string {
+  return "Usage: /imagine <description>\nProvide a text description to generate an image.";
+}
+
+/** Grok Build `/imagine` expansion — model must call image_gen with prompt verbatim. */
+export function imagineInstruction(prompt: string): string {
+  return (
+    "Call the image_gen tool immediately, passing the user's prompt below " +
+    "verbatim — do not rewrite, embellish, or expand it. " +
+    "After the tool completes, briefly acknowledge and mention " +
+    "where the image was saved.\n\n" +
+    `Prompt: ${prompt}`
+  );
+}
+
 export function registerXaiImageGen(api: ExtensionAPI): void {
   if (!isImageGenEnabled()) return;
+
+  api.registerCommand("imagine", {
+    description: "Generate an image (Grok Build /imagine → image_gen, prompt verbatim)",
+    async handler(args, ctx) {
+      const prompt = (args ?? "").trim();
+      if (!prompt) {
+        ctx.ui.notify(imagineUsageMessage(), "info");
+        return;
+      }
+      const instruction = imagineInstruction(prompt);
+      const send = (ctx as { sendUserMessage?: (c: string) => Promise<void> }).sendUserMessage;
+      if (typeof send === "function") {
+        await send.call(ctx, instruction);
+      } else {
+        ctx.ui.notify(`Call image_gen with prompt: ${prompt}`, "info");
+      }
+    },
+  });
 
   api.registerTool(
     defineTool({

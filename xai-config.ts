@@ -131,6 +131,35 @@ export function isImageGenEnabled(config: ResolvedXaiConfig = resolveXaiConfig()
   return v !== false && v !== "false";
 }
 
+/** Video tools. On by default unless opt-out or pi-xai-imagine is co-installed. */
+export function isVideoGenEnabled(config: ResolvedXaiConfig = resolveXaiConfig()): boolean {
+  const v = config.xai.text?.videoGen;
+  if (v === false || v === "false") return false;
+  if (isSiblingPackageListed("pi-xai-imagine")) return false;
+  return true;
+}
+
+/** True if settings packages list includes a path/name matching `name` (e.g. pi-xai-imagine). */
+export function isSiblingPackageListed(name: string): boolean {
+  try {
+    for (const file of [USER_PI_SETTINGS_PATH, PROJECT_PI_SETTINGS_PATH]) {
+      if (!existsSync(file)) continue;
+      const raw = JSON.parse(readFileSync(file, "utf8")) as { packages?: unknown };
+      const pkgs = Array.isArray(raw.packages) ? raw.packages : [];
+      for (const entry of pkgs) {
+        if (typeof entry !== "string") continue;
+        const n = entry.replace(/\\/g, "/");
+        const base = n.split("/").pop() || n;
+        if (base === name || base.startsWith(`${name}@`) || n.endsWith(`/${name}`)) return true;
+        if (n === `npm:${name}` || n.startsWith(`npm:${name}@`)) return true;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 /** Footer quota status. Off by default; `xai.text.usageStatus: true` or `/xai-usage statusbar`. */
 export function isUsageStatusEnabled(config: ResolvedXaiConfig = resolveXaiConfig()): boolean {
   const v = config.xai.text?.usageStatus;
