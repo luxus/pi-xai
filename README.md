@@ -57,6 +57,8 @@ pi install npm:pi-xai
 | `/model grok-build/…` | Catalog below |
 | `/goal <objective>` | Grok Build–style goal mode (`status` / `pause` / `resume` / `clear`) |
 | `/plan` | Plan mode on/off (`status` / `show`); tools `enter_plan_mode` / `exit_plan_mode` |
+| `/imagine` | Image gen (prompt passed **verbatim** to `image_gen`) |
+| `/imagine-video` | Video workflow (`image_gen` → `image_to_video`) |
 | `/xai-suggest` | Next-prompt ghost after turns (`on` / `off` / `clear`); **Tab** accepts |
 | `/xai-usage` | Monthly/weekly subscription bars (`% left`) + reset |
 | `/xai-usage statusbar` | Footer `Grok 40% left · 3d 12h` (Grok models only) |
@@ -149,17 +151,19 @@ Fills the **empty textbox** with dim ghost text after each turn (Composer model 
 
 ### Imagine (in-package)
 
-| Tool | Purpose |
+| Tool / cmd | Purpose |
 | --- | --- |
+| `/imagine` | Slash → model calls `image_gen` with prompt verbatim |
 | `image_gen` | Text → image (Grok Build name) |
 | `image_edit` | Edit with local path / URL refs (paths → data URIs) |
+| `/imagine-video` | Slash → `image_gen` then `image_to_video` |
+| `image_to_video` | Animate one source image (duration 6\|10s) |
+| `web_fetch` | Fetch public URL → markdown/text (SSRF-guarded) |
 
-**Dual-install:** if **pi-xai-imagine** is also loaded, it skips `image_gen` so only this package owns the official name (video/studio stay in imagine).
-
-Opt out Imagine tools here:
+**Dual-install:** if **pi-xai-imagine** is also loaded, it skips `image_gen`; this package also **skips video tools** so imagine can own studio/video. Opt out here:
 
 ```json
-{ "xai": { "text": { "imageGen": false } } }
+{ "xai": { "text": { "imageGen": false, "videoGen": false } } }
 ```
 
 ### Agentic server tools (on by default)
@@ -243,7 +247,9 @@ npm run verify:deps
 | `xai-config.ts` | Settings |
 | `xai-stream.ts` | CLI proxy headers |
 | `xai-images.ts` | Image path → data URI |
-| `xai-image-gen.ts` | Imagine tools |
+| `xai-image-gen.ts` | Imagine tools + `/imagine` |
+| `xai-video-gen.ts` | `image_to_video` + `/imagine-video` |
+| `xai-web-fetch.ts` | `web_fetch` |
 | `xai-goal.ts` | `/goal` + `update_goal` |
 | `xai-plan-mode.ts` | `/plan` + enter/exit_plan_mode |
 | `xai-prompt-suggest.ts` | Next-prompt ghost |

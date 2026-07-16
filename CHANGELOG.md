@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Grok Build–style goal mode** — `/goal <objective>` plus tool `update_goal` (progress / complete / blocked). Lean port without classifier harness; active-goal reminder on each turn.
 - **Plan mode** — `/plan [on|off|status|show]`, tools `enter_plan_mode` / `exit_plan_mode`, plan file `.pi/plan.md`, read-only tool set + bash allowlist while active.
-- **Prompt ghost suggestions** — after each turn, predict the next user message (small Responses call); show above editor; **Tab** accepts. Toggle: `/xai-suggest on|off` (env `XAI_PROMPT_SUGGESTIONS=0` disables).
+- **Prompt ghost suggestions** — after each turn, predict the next user message (Composer by default); dim text in empty textbox; **Tab** commits. Toggle: `/xai-suggest on|off`.
+- **`/imagine`** — Grok-style slash: expand to `image_gen` with prompt **verbatim**.
+- **`image_to_video` + `/imagine-video`** — single-clip video workflow; auto-off when `pi-xai-imagine` is co-installed; opt out `xai.text.videoGen: false`.
+- **`web_fetch`** — client URL fetch → markdown/text with SSRF guards (no new deps).
 
 ### Changed
 
