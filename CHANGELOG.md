@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-07-24
+
+### Fixed
+
+- **Prompt ghost no longer steals Tab** — removed `registerShortcut("tab")` so built-in `tui.input.tab` works; feature defaults **off** (`/xai-suggest on` or `XAI_PROMPT_SUGGESTIONS=1` to enable). Enter still sends ghost text with ANSI stripped.
+
 ## [0.17.0] - 2026-07-16
 
 ### Added

@@ -55,7 +55,7 @@ pi install npm:pi-xai
 | `/plan` | Plan mode (`on` / `off` / `status` / `show`); tools `enter_plan_mode` / `exit_plan_mode` |
 | `/imagine` | Image gen — prompt passed **verbatim** to `image_gen` |
 | `/imagine-video` | Video workflow (`image_gen` → `image_to_video`) |
-| `/xai-suggest` | Next-prompt ghost (`on` / `off` / `clear`); **Tab** commits |
+| `/xai-suggest` | Next-prompt ghost (`on` / `off` / `clear`); off by default; Enter sends |
 | `/xai-usage` | Monthly/weekly subscription bars (`% left`) + reset |
 | `/xai-usage statusbar` | Footer `Grok 40% left · 3d 12h` (Grok models only) |
 | `/xai-vision:status` | Vision routing for text-only models (Composer default) |
@@ -163,13 +163,13 @@ Tools **`enter_plan_mode`** / **`exit_plan_mode`**. Plan file **`.pi/plan.md`**.
 
 ### Prompt ghost (next message)
 
-After each turn, predicts the next user prompt (default model **`grok-composer-2.5-fast`**). Dim text **in the empty textbox**; **Tab** commits; Enter sends (ANSI stripped).
+After each turn, predicts the next user prompt (default model **`grok-composer-2.5-fast`**). Dim text **in the empty textbox**; Enter sends (ANSI stripped). **Tab is not bound** (keeps pi-agent `tui.input.tab`). Off by default.
 
 ```text
 /xai-suggest on|off|status|clear
 ```
 
-`XAI_PROMPT_SUGGESTIONS=0` or `/xai-suggest off` disables. Model override: `XAI_PROMPT_SUGGESTIONS_MODEL`.
+`XAI_PROMPT_SUGGESTIONS=0` or `/xai-suggest off` disables; `=1` or `/xai-suggest on` enables. Model override: `XAI_PROMPT_SUGGESTIONS_MODEL`.
 
 ### Imagine & video
 

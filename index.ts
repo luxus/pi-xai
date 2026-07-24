@@ -438,7 +438,7 @@ export default async function (api: ExtensionAPI) {
   // Grok Build plan mode: /plan + enter_plan_mode / exit_plan_mode.
   registerXaiPlanMode(api);
 
-  // Next-prompt ghost: predict after each turn; Tab accepts (/xai-suggest off).
+  // Next-prompt ghost: off by default; /xai-suggest on (no Tab bind — keeps tui.input.tab).
   registerXaiPromptSuggest(api);
 
   // Optional footer status: Grok N% left · Nd Nh (Grok models only).

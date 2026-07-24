@@ -2,8 +2,8 @@
  * Grok Build–style next-prompt ghost in the editor textbox.
  *
  * After a turn ends, predict the next user message (Composer by default).
- * Fills the empty textbox with dim ghost text; Tab / Enter confirm as plain text.
- * Typing any other key clears the ghost and starts fresh.
+ * Fills the empty textbox with dim ghost text; Enter sends (ANSI stripped).
+ * Typing clears the ghost. Does NOT bind Tab — that stays for pi-agent tui.input.tab.
  *
  * Source: xai-org/grok-build prompt_suggest + prompt_suggestion controller.
  */
@@ -61,7 +61,8 @@ const ONE_WORD = new Set([
   "merge",
 ]);
 
-let enabled = true;
+// Off by default: in-editor ghost + shortcuts fight pi-agent keybindings (esp. Tab).
+let enabled = false;
 let suggestion = "";
 let generation = 0;
 /** True while the textbox shows dim ghost (not committed user input). */
@@ -207,16 +208,6 @@ function showInTextbox(text: string): void {
   }
 }
 
-function acceptInTextbox(): void {
-  if (!suggestion || !lastUi) return;
-  try {
-    lastUi.setEditorText(suggestion);
-  } catch {
-    /* ignore */
-  }
-  ghostInEditor = false;
-}
-
 async function fetchSuggestion(transcript: string): Promise<string | undefined> {
   const effective = await getEffectiveXaiApiKey();
   if (!effective?.apiKey) return undefined;
@@ -279,7 +270,10 @@ export function registerXaiPromptSuggest(api: ExtensionAPI): void {
       }
       if (sub === "on") {
         setPromptSuggestEnabled(true);
-        ctx.ui.notify("Prompt suggestions ON — ghost fills empty textbox after turns", "info");
+        ctx.ui.notify(
+          "Prompt suggestions ON — ghost fills empty textbox after turns (Enter sends; Tab unbound)",
+          "info",
+        );
         return;
       }
       if (sub === "clear") {
@@ -299,14 +293,7 @@ export function registerXaiPromptSuggest(api: ExtensionAPI): void {
     },
   });
 
-  api.registerShortcut("tab", {
-    description: "Accept predicted next prompt in textbox",
-    handler: async (ctx) => {
-      lastUi = ctx.ui;
-      if (!isPromptSuggestEnabled() || !suggestion || !ghostInEditor) return;
-      acceptInTextbox();
-    },
-  });
+  // No Tab shortcut — conflicts with built-in tui.input.tab (extension would win).
 
   // Submit: strip dim ANSI so the model never sees escape codes.
   api.on("input", async (event) => {
