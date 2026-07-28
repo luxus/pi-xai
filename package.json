@@ -30,8 +30,7 @@
   ],
   "type": "module",
   "exports": {
-    ".": "./index.ts",
-    "./one-shot": "./xai-one-shot.ts"
+    ".": "./index.ts"
   },
   "scripts": {
     "build": "echo 'nothing to build'",
@@ -68,7 +67,7 @@
     ]
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.19.0"
   },
   "pi": {
     "extensions": [

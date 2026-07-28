@@ -44,7 +44,7 @@ async function readBoundedStdin(stdin: InputStream): Promise<string> {
     if (total > MAX_ONE_SHOT_REQUEST_BYTES) throw new Error("request too large");
     chunks.push(buffer);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
 }
 
 function boundedFrame(frame: OneShotResultFrame): string {

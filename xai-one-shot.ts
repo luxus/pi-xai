@@ -61,7 +61,7 @@ export type OneShotResultFrame =
 
 export interface OneShotAuth {
   /** Returns an access token internally. Callers never receive or serialize it. */
-  getAccessToken(): Promise<string>;
+  getAccessToken(signal?: AbortSignal): Promise<string>;
 }
 
 export interface OneShotProvider {
@@ -273,58 +273,86 @@ function errorStatus(error: unknown): number | undefined {
   return typeof error.status === "number" ? error.status : undefined;
 }
 
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => reject(signal.reason);
+    signal.addEventListener("abort", aborted, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", aborted));
+  });
+}
+
 export async function runOneShot(
   request: OneShotRequest,
   dependencies: OneShotDependencies,
 ): Promise<OneShotRunResult> {
+  const startedAt = Date.now();
+  const abortController = new AbortController();
+  const timeout = setTimeout(
+    () => abortController.abort(new Error("one-shot deadline exceeded")),
+    request.timeout_ms,
+  );
+  timeout.unref();
+
   let apiKey: string;
   try {
-    apiKey = await dependencies.auth.getAccessToken();
+    apiKey = await raceWithAbort(
+      dependencies.auth.getAccessToken(abortController.signal),
+      abortController.signal,
+    );
     if (!apiKey) throw new Error("missing token");
   } catch {
+    clearTimeout(timeout);
     return failure(EXIT_AUTH_FAILED, "oauth_unavailable", "Grok Build OAuth is unavailable.");
   }
 
   const model = dependencies.provider.createModel(request.model);
   let response: AssistantMessage;
   try {
-    response = await dependencies.transport.complete(
-      model,
-      { messages: [{ role: "user", content: request.prompt, timestamp: Date.now() }] },
-      {
-        apiKey,
-        maxTokens: request.max_output_tokens,
-        timeoutMs: request.timeout_ms,
-        maxRetries: 0,
-        maxRetryDelayMs: 0,
-        cacheRetention: "none",
-        onPayload(payload) {
-          if (!isRecord(payload)) throw new Error("invalid provider payload");
-          payload.store = false;
-          delete payload.prompt_cache_key;
-          delete payload.prompt_cache_retention;
-          delete payload.previous_response_id;
-          delete payload.tools;
-          delete payload.include;
-          delete payload.workspace;
-          payload.text = {
-            format: {
-              type: "json_schema",
-              name: "candidate_envelope",
-              strict: true,
-              schema: CANDIDATE_ENVELOPE_SCHEMA,
-            },
-          };
-          return payload;
+    const remainingMs = Math.max(1, request.timeout_ms - (Date.now() - startedAt));
+    response = await raceWithAbort(
+      dependencies.transport.complete(
+        model,
+        { messages: [{ role: "user", content: request.prompt, timestamp: Date.now() }] },
+        {
+          apiKey,
+          maxTokens: request.max_output_tokens,
+          timeoutMs: remainingMs,
+          signal: abortController.signal,
+          maxRetries: 0,
+          maxRetryDelayMs: 0,
+          cacheRetention: "none",
+          onPayload(payload) {
+            if (!isRecord(payload)) throw new Error("invalid provider payload");
+            payload.store = false;
+            delete payload.prompt_cache_key;
+            delete payload.prompt_cache_retention;
+            delete payload.previous_response_id;
+            delete payload.tools;
+            delete payload.include;
+            delete payload.workspace;
+            payload.text = {
+              format: {
+                type: "json_schema",
+                name: "candidate_envelope",
+                strict: true,
+                schema: CANDIDATE_ENVELOPE_SCHEMA,
+              },
+            };
+            return payload;
+          },
         },
-      },
+      ),
+      abortController.signal,
     );
   } catch (error) {
+    clearTimeout(timeout);
     if (errorStatus(error) === 429) {
       return failure(EXIT_REQUEST_FAILED, "rate_limited", "Generation request was rate limited.");
     }
     return failure(EXIT_REQUEST_FAILED, "generation_failed", "Generation request failed.");
   }
+  clearTimeout(timeout);
 
   if (
     response.stopReason !== "stop" ||

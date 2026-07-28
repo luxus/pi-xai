@@ -163,7 +163,7 @@ Success frame (exit `0`):
 
 `usage` is omitted unless the provider reports valid nonnegative integer token counts. Cost/spend is never estimated. Failure frames use `{"ok":false,"error":{"code":"...","message":"..."}}` with deterministic exits: invalid input `2`, OAuth `3`, request/rate-limit `4`, invalid model output `5`, internal output-bound failure `6`. stderr is either empty or one bounded sanitized code line; provider bodies, prompts, and credentials are never echoed.
 
-The bounded generation seam is exported as `pi-xai/one-shot` for hermetic adapters/tests. The production OAuth resolver remains package-internal so consumers cannot request token material from it.
+The one-shot helper is an executable-only package contract. Its TypeScript test seams remain package-internal, so normal Node consumers are not given an unrunnable raw `.ts` subpath and cannot request token material from the OAuth resolver.
 
 ## Development
 

@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { describe, expect, test } from "vitest";
 import type {
   AssistantMessage,
@@ -7,13 +12,19 @@ import type {
   OAuthProviderInterface,
   ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
+import { registerOAuthProvider, unregisterOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import {
   CANDIDATE_ENVELOPE_SCHEMA,
   DEFAULT_ONE_SHOT_PROVIDER,
+  EXIT_AUTH_FAILED,
   EXIT_INVALID_RESPONSE,
   EXIT_REQUEST_FAILED,
+  MAX_GENERATION_PROMPT_BYTES,
+  MAX_ONE_SHOT_REQUEST_BYTES,
+  MAX_PARENT_PROMPT_BYTES,
   runOneShot,
+  validateOneShotRequest,
   type OneShotDependencies,
   type OneShotRequest,
 } from "../xai-one-shot.ts";
@@ -101,27 +112,35 @@ function dependencies(response: AssistantMessage | Error) {
 }
 
 describe("bounded xAI one-shot helper", () => {
-  test("uses the injected Pi auth/provider seam to refresh exactly once", async () => {
+  test("uses Pi's locked canonical refresh path once across racing storage instances", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-xai-auth-"));
+    const authPath = join(dir, "auth.json");
+    await writeFile(
+      authPath,
+      JSON.stringify({
+        "grok-build": {
+          type: "oauth",
+          access: "expired-secret",
+          refresh: "refresh-secret",
+          expires: 0,
+        },
+      }),
+      { mode: 0o600 },
+    );
     let refreshCalls = 0;
-    const storage = AuthStorage.inMemory({
-      "grok-build": {
-        type: "oauth",
-        access: "expired-secret",
-        refresh: "refresh-secret",
-        expires: 0,
-      },
-    });
     const provider: OAuthProviderInterface = {
       id: "grok-build",
       name: "fake",
       async login() {
         throw new Error("not used");
       },
-      async refreshToken() {
+      async refreshToken(credentials) {
         refreshCalls++;
+        expect(credentials.refresh).toBe("refresh-secret");
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
         return {
           access: "fresh-secret",
-          refresh: "next-refresh-secret",
+          refresh: "rotated-refresh-secret",
           expires: Date.now() + 60_000,
         };
       },
@@ -129,11 +148,46 @@ describe("bounded xAI one-shot helper", () => {
         return credentials.access;
       },
     };
-    const auth = createPiGrokBuildAuth({ authStorage: storage, oauthProvider: provider });
+    registerOAuthProvider(provider);
+    try {
+      const first = createPiGrokBuildAuth({
+        authStorage: AuthStorage.create(authPath),
+        oauthProvider: provider,
+      });
+      const second = createPiGrokBuildAuth({
+        authStorage: AuthStorage.create(authPath),
+        oauthProvider: provider,
+      });
+      await expect(Promise.all([first.getAccessToken(), second.getAccessToken()])).resolves.toEqual(
+        ["fresh-secret", "fresh-secret"],
+      );
+      expect(refreshCalls).toBe(1);
+      const persisted = JSON.parse(await readFile(authPath, "utf8"));
+      expect(persisted["grok-build"]).toMatchObject({
+        type: "oauth",
+        access: "fresh-secret",
+        refresh: "rotated-refresh-secret",
+      });
+    } finally {
+      unregisterOAuthProvider("grok-build");
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
-    await expect(auth.getAccessToken()).resolves.toBe("fresh-secret");
-    expect(refreshCalls).toBe(1);
-    expect(storage.get("grok-build")).toMatchObject({ type: "oauth", access: "fresh-secret" });
+  test("surfaces AuthStorage persistence errors without exposing credentials", async () => {
+    let drainCalls = 0;
+    const storage = {
+      get: () => ({
+        type: "oauth" as const,
+        access: "old-secret",
+        refresh: "refresh-secret",
+        expires: 0,
+      }),
+      getApiKey: async () => "new-secret",
+      drainErrors: () => (++drainCalls === 1 ? [] : [new Error("failed writing new-secret")]),
+    };
+    const auth = createPiGrokBuildAuth({ authStorage: storage });
+    await expect(auth.getAccessToken()).rejects.toThrow("OAuth credential persistence failed");
   });
 
   test("resolves OAuth once and performs one bounded stateless generation", async () => {
@@ -167,10 +221,11 @@ describe("bounded xAI one-shot helper", () => {
     expect(call.options).toMatchObject({
       apiKey: fake.secret,
       maxTokens: 512,
-      timeoutMs: 12_000,
       maxRetries: 0,
       cacheRetention: "none",
     });
+    expect(call.options.timeoutMs).toBeGreaterThan(0);
+    expect(call.options.timeoutMs).toBeLessThanOrEqual(12_000);
     expect(call.options).not.toHaveProperty("sessionId");
 
     let payload: any = { store: false };
@@ -185,6 +240,51 @@ describe("bounded xAI one-shot helper", () => {
       strict: true,
       schema: CANDIDATE_ENVELOPE_SCHEMA,
     });
+  });
+
+  test("includes OAuth refresh in the total wall-clock timeout", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const fake = dependencies(message(envelope()));
+    fake.deps.auth = {
+      getAccessToken(signal) {
+        observedSignal = signal;
+        return new Promise(() => {});
+      },
+    };
+    const started = Date.now();
+    const result = await runOneShot({ ...request, timeout_ms: 20 }, fake.deps);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(result).toEqual({
+      exitCode: EXIT_AUTH_FAILED,
+      frame: {
+        ok: false,
+        error: { code: "oauth_unavailable", message: "Grok Build OAuth is unavailable." },
+      },
+    });
+    expect(fake.counts()).toEqual({ authCalls: 0, generationCalls: 0 });
+  });
+
+  test("passes only the remaining wall-clock budget and abort signal to generation", async () => {
+    let generationSignal: AbortSignal | undefined;
+    let generationTimeout: number | undefined;
+    const fake = dependencies(message(envelope()));
+    fake.deps.auth = {
+      async getAccessToken() {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+        return "secret";
+      },
+    };
+    fake.deps.transport.complete = async (_model, _context, options) => {
+      generationSignal = options.signal;
+      generationTimeout = options.timeoutMs as number;
+      return new Promise(() => {});
+    };
+    const result = await runOneShot({ ...request, timeout_ms: 40 }, fake.deps);
+    expect(generationTimeout).toBeGreaterThan(0);
+    expect(generationTimeout).toBeLessThan(40);
+    expect(generationSignal?.aborted).toBe(true);
+    expect(result.exitCode).toBe(EXIT_REQUEST_FAILED);
   });
 
   test("does not retry a 429 and does not leak provider details", async () => {
@@ -297,6 +397,58 @@ describe("bounded xAI one-shot helper", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("CLI rejects malformed UTF-8 rather than replacement-decoding it", async () => {
+    const fake = dependencies(message(envelope()));
+    const stdout: string[] = [];
+    const exitCode = await runOneShotCli(
+      {
+        stdin: (async function* () {
+          yield new Uint8Array([0x7b, 0x22, 0xc3, 0x28, 0x22, 0x3a, 0x31, 0x7d]);
+        })(),
+        stdout: { write: (chunk) => stdout.push(chunk) },
+        stderr: { write: () => undefined },
+      },
+      fake.deps,
+    );
+    expect(exitCode).toBe(2);
+    expect(JSON.parse(stdout[0])).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    expect(fake.counts()).toEqual({ authCalls: 0, generationCalls: 0 });
+  });
+
+  test("CLI enforces the outer request frame at and just above its byte boundary", async () => {
+    for (const size of [MAX_ONE_SHOT_REQUEST_BYTES, MAX_ONE_SHOT_REQUEST_BYTES + 1]) {
+      const fake = dependencies(message(envelope()));
+      const stdout: string[] = [];
+      const exitCode = await runOneShotCli(
+        {
+          stdin: (async function* () {
+            yield Buffer.alloc(size, 0x20);
+          })(),
+          stdout: { write: (chunk) => stdout.push(chunk) },
+          stderr: { write: () => undefined },
+        },
+        fake.deps,
+      );
+      expect(exitCode).toBe(2);
+      expect(stdout).toHaveLength(1);
+      expect(Buffer.byteLength(stdout[0])).toBeLessThan(MAX_ONE_SHOT_REQUEST_BYTES);
+      expect(fake.counts()).toEqual({ authCalls: 0, generationCalls: 0 });
+    }
+  });
+
+  test("accepts exact prompt byte limits and rejects one byte over", () => {
+    const boundedParent = "p".repeat(MAX_PARENT_PROMPT_BYTES);
+    const bounded = {
+      ...request,
+      parent_prompt: boundedParent,
+      parent_prompt_sha256: createHash("sha256").update(boundedParent).digest("hex"),
+      prompt: "q".repeat(MAX_GENERATION_PROMPT_BYTES),
+    };
+    expect(validateOneShotRequest(bounded)).toBe(true);
+    expect(validateOneShotRequest({ ...bounded, parent_prompt: `${boundedParent}p` })).toBe(false);
+    expect(validateOneShotRequest({ ...bounded, prompt: `${bounded.prompt}q` })).toBe(false);
+  });
+
   test("CLI emits one bounded sanitized failure frame for malformed input", async () => {
     const fake = dependencies(message(envelope()));
     const stdout: string[] = [];
@@ -321,6 +473,48 @@ describe("bounded xAI one-shot helper", () => {
     expect(stderr).toEqual(["pi-xai-one-shot: invalid_request\n"]);
     expect(fake.counts()).toEqual({ authCalls: 0, generationCalls: 0 });
   });
+
+  test("package metadata matches the Pi runtime and exposes only the executable contract", async () => {
+    const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+    expect(manifest.engines.node).toBe(">=22.19.0");
+    expect(manifest.bin).toEqual({ "pi-xai-one-shot": "./xai-one-shot-bin.js" });
+    expect(manifest.exports).not.toHaveProperty("./one-shot");
+  });
+
+  test("the npm-packed bin starts and emits one framed failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-xai-pack-"));
+    try {
+      const pack = spawn("npm", ["pack", "--ignore-scripts", "--pack-destination", dir], {
+        cwd: resolve("."),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let packStdout = "";
+      pack.stdout.on("data", (chunk) => (packStdout += String(chunk)));
+      const [packExit] = (await once(pack, "close")) as [number];
+      expect(packExit).toBe(0);
+      const tarball = join(dir, packStdout.trim().split("\n").at(-1)!);
+      const extract = spawn("tar", ["-xzf", tarball, "-C", dir]);
+      const [extractExit] = (await once(extract, "close")) as [number];
+      expect(extractExit).toBe(0);
+      await symlink(resolve("node_modules"), join(dir, "package", "node_modules"), "dir");
+
+      const child = spawn(process.execPath, [join(dir, "package", "xai-one-shot-bin.js")], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => (stdout += String(chunk)));
+      child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+      child.stdin.end("not-json");
+      const [exitCode] = (await once(child, "close")) as [number];
+      expect(exitCode).toBe(2);
+      expect(stdout.split("\n").filter(Boolean)).toHaveLength(1);
+      expect(JSON.parse(stdout)).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+      expect(stderr).toBe("pi-xai-one-shot: invalid_request\n");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test("omits invalid usage instead of inventing spend", async () => {
     const fake = dependencies(
