@@ -75,25 +75,27 @@ Default = enabled with all three built-in tools.
 
 ## Payload normalization modes (`compatible` vs `aggressive`)
 
-The extension supports two payload normalization modes for grok-* models (via the `openai-responses` driver + our hook). Controlled by `xai.payloadMode` in `~/.pi/agent/settings.json` (or project `.pi/settings.json`):
+The extension supports two payload normalization modes for grok-\* models (via the `openai-responses` driver + our hook). Controlled by `xai.payloadMode` in `~/.pi/agent/settings.json` (or project `.pi/settings.json`):
 
 ```json
 {
   "xai": {
-    "payloadMode": "compatible"   // default — or "aggressive"
+    "payloadMode": "compatible" // default — or "aggressive"
   }
 }
 ```
 
 ### `compatible` (default)
+
 - 100% unchanged behavior for existing users.
 - Applies a defensive, enhanced content-element normalizer (catches `content: []`, `""`, whitespace-only, arrays of only malformed/empty/garbage parts, while safely preserving pure `input_image` vision messages and mixed content).
 - Protects against the common 400 "Each message must have at least one content element" after tool turns or certain histories.
 - Sufficient for the majority of users and the rich `xai_*` tools.
 
 ### `aggressive`
+
 - **Opt-in only** (no default change ever).
-- Runs the full rewrite in the provider chat/agentic path (`before_provider_request` for grok-*):
+- Runs the full rewrite in the provider chat/agentic path (`before_provider_request` for grok-\*):
   - The complete `normalizeForXai` (content guarantee + **Hermes-like reasoning-item stripping**).
   - Relocates developer/system messages to top-level `instructions`.
   - Stricter `function_call_output.output` sanitization (arrays → text with `[image]` placeholders + JSON fallback to avoid 422s).
@@ -105,17 +107,63 @@ The extension supports two payload normalization modes for grok-* models (via th
 - Sibling extensions and direct `/responses` callers get the full benefit by calling the exported `normalizeForXai(inputArray)` helper (see JSDoc in `index.ts` for the exact usage recipe).
 
 **When to switch to `aggressive`**:
+
 - You hit 400s on complex/high-reasoning/tool-heavy conversations despite the default.
 - Developing or using sibling packages (`pi-xai-imagine`, etc.) that do direct Responses calls.
 - Long multi-turn agentic workflows or "imagine" workspaces with heavy reasoning.
 - You want the closest experience to how Hermes (the reference) handles xAI paths.
 
 **Important limitations** (transparent due to architectural constraints):
+
 - The rich built-in tools (`xai_generate_text`, `xai_web_search`, `xai_x_search`, `xai_code_execution`, `xai_multi_agent`) and any code path that goes through the internal `callXaiResponses` (including many sibling direct calls during development) **always use only the enhanced-compatible normalization**, even if you set `payloadMode: "aggressive"`. They never receive the reasoning strip, relocation, or extra tool cleaning.
-- For full aggressive/Hermes guarantees on *your own* direct Responses calls, explicitly call `normalizeForXai(...)` on the `input` array (the helper is the single source of truth and the recommended path for power users / siblings).
-- Only the normal provider-driven grok-* chat + auto-injected agentic tools path gets the complete aggressive treatment.
+- For full aggressive/Hermes guarantees on _your own_ direct Responses calls, explicitly call `normalizeForXai(...)` on the `input` array (the helper is the single source of truth and the recommended path for power users / siblings).
+- Only the normal provider-driven grok-\* chat + auto-injected agentic tools path gets the complete aggressive treatment.
 
 See the detailed JSDoc on `normalizeForXai` and the payloadMode block in `index.ts` for implementation notes, every `(as any)` rationale, and the full constraint history (smallest possible diff, no new internal helpers, single grok-build provider, in-place only).
+
+## Bounded OAuth one-shot CLI
+
+`pi-xai-one-shot` is a deliberately narrow adapter for bounded prompt-optimization experiments. It uses only the persisted Pi `grok-build` OAuth credential from `/login grok-build`; pi-xai performs any required refresh and Pi `AuthStorage` persists rotated credentials. Tokens never appear in the CLI request or result.
+
+The executable accepts no arguments. It reads exactly one UTF-8 JSON value from stdin (maximum 1 MiB) and writes exactly one newline-terminated JSON result frame to stdout. Unknown/duplicate fields and trailing input are rejected. Request contract:
+
+```json
+{
+  "schema_version": 1,
+  "model": "grok-build",
+  "parent_prompt_sha256": "64 lowercase hex characters",
+  "parent_prompt": "exact parent prompt",
+  "prompt": "the sole user message, including the bounded Optimization Brief",
+  "max_output_tokens": 1024,
+  "timeout_ms": 600000
+}
+```
+
+The hash must equal SHA-256 of the exact UTF-8 `parent_prompt`. Bounds are 256 KiB for the parent, 768 KiB for the sole user message, 1–32,768 output tokens, and 1–600,000 ms. The request is one fresh Responses API generation with `maxRetries: 0`, `store: false`, cache retention `none`, no session/previous response, and no tools, server-side tools, workspace, context discovery, skills, or extensions. The wire request applies a strict JSON schema for exactly:
+
+```json
+{
+  "parent_prompt_sha256": "...",
+  "hypothesis": "...",
+  "candidate_prompt": "... ${output} ..."
+}
+```
+
+The response must contain exactly one text output block and one strict JSON object. Its parent hash must match, `hypothesis` must be nonblank and at most 8 KiB, `candidate_prompt` must be at most 256 KiB and differ from the exact parent, and `${output}` must occur exactly once. There is no retry, repair, Markdown extraction, or second choice/output acceptance.
+
+Success frame (exit `0`):
+
+```json
+{
+  "ok": true,
+  "candidate": { "parent_prompt_sha256": "...", "hypothesis": "...", "candidate_prompt": "..." },
+  "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+}
+```
+
+`usage` is omitted unless the provider reports valid nonnegative integer token counts. Cost/spend is never estimated. Failure frames use `{"ok":false,"error":{"code":"...","message":"..."}}` with deterministic exits: invalid input `2`, OAuth `3`, request/rate-limit `4`, invalid model output `5`, internal output-bound failure `6`. stderr is either empty or one bounded sanitized code line; provider bodies, prompts, and credentials are never echoed.
+
+The bounded generation seam is exported as `pi-xai/one-shot` for hermetic adapters/tests. The production OAuth resolver remains package-internal so consumers cannot request token material from it.
 
 ## Development
 
@@ -131,4 +179,4 @@ npm test
 
 Husky + lint-staged runs `oxfmt --write`, `oxlint`, `tsgo --noEmit` on every commit.
 
-Exactly 4 source files. See CHANGELOG.md.
+See CHANGELOG.md for release history.

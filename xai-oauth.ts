@@ -962,6 +962,16 @@ export function getXaiApiKeyFromCredentials(cred: OAuthCredentials): string {
   return cred.access;
 }
 
+/** Shared provider descriptor for Pi AuthStorage and the extension registration. */
+export const grokBuildOAuthProvider = {
+  id: "grok-build",
+  name: "xAI (Grok Build)",
+  usesCallbackServer: true,
+  login: loginXai,
+  refreshToken: refreshXaiToken,
+  getApiKey: getXaiApiKeyFromCredentials,
+};
+
 // =============================================================================
 // Combined key resolver used by the extension tools (grok-cli + Pi auth + env + settings)
 // =============================================================================

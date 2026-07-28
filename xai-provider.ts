@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveXaiConfig } from "./xai-config.ts";
-import { loginXai, refreshXaiToken, getXaiApiKeyFromCredentials } from "./xai-oauth.ts";
+import { grokBuildOAuthProvider } from "./xai-oauth.ts";
 
 export function registerXaiProvider(api: ExtensionAPI) {
   const config = resolveXaiConfig();
@@ -13,14 +13,14 @@ export function registerXaiProvider(api: ExtensionAPI) {
     authHeader: true,
 
     oauth: {
-      name: "xAI (Grok Build)",
+      name: grokBuildOAuthProvider.name,
       // Enable PKCE callback server + manual redirect URL paste fallback in Pi core UI.
       // (usesCallbackServer signals the Pi core to provide onManualCodeInput + paste UI
       // for the localhost callback flow when browser redirect is blocked.)
-      usesCallbackServer: true,
-      login: loginXai,
-      refreshToken: refreshXaiToken,
-      getApiKey: getXaiApiKeyFromCredentials,
+      usesCallbackServer: grokBuildOAuthProvider.usesCallbackServer,
+      login: grokBuildOAuthProvider.login,
+      refreshToken: grokBuildOAuthProvider.refreshToken,
+      getApiKey: grokBuildOAuthProvider.getApiKey,
     } as any,
 
     // Exact model list from Hermes PR #25941 for the Coding Plan.
