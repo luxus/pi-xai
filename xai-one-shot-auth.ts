@@ -1,7 +1,7 @@
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { OAuthProviderInterface } from "@earendil-works/pi-ai";
 import { registerOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import { grokBuildOAuthProvider } from "./xai-oauth.ts";
+import { createGrokBuildOAuthProvider } from "./xai-oauth.ts";
 import type { OneShotAuth } from "./xai-one-shot.ts";
 
 interface AuthStorageLike {
@@ -23,11 +23,14 @@ export interface PiGrokBuildAuthOptions {
  */
 export function createPiGrokBuildAuth(options: PiGrokBuildAuthOptions = {}): OneShotAuth {
   const authStorage = options.authStorage ?? AuthStorage.create();
-  const provider = options.oauthProvider ?? grokBuildOAuthProvider;
-  registerOAuthProvider(provider);
 
   return {
     async getAccessToken(signal) {
+      // Capture this invocation's deadline in the provider refresh callback while
+      // leaving the normal extension provider unbounded.
+      const provider = options.oauthProvider ?? createGrokBuildOAuthProvider(signal);
+      registerOAuthProvider(provider);
+
       // pi-coding-agent ships its own locked pi-ai runtime via npm shrinkwrap.
       // Register in that registry too; flattened installs use the registration above.
       try {

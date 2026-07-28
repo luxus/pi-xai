@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -481,7 +481,7 @@ describe("bounded xAI one-shot helper", () => {
     expect(manifest.exports).not.toHaveProperty("./one-shot");
   });
 
-  test("the npm-packed bin starts and emits one framed failure", async () => {
+  test("the npm-packed bin is executable and exits when OAuth refresh hangs", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-xai-pack-"));
     try {
       const pack = spawn("npm", ["pack", "--ignore-scripts", "--pack-destination", dir], {
@@ -511,6 +511,68 @@ describe("bounded xAI one-shot helper", () => {
       expect(stdout.split("\n").filter(Boolean)).toHaveLength(1);
       expect(JSON.parse(stdout)).toMatchObject({ ok: false, error: { code: "invalid_request" } });
       expect(stderr).toBe("pi-xai-one-shot: invalid_request\n");
+
+      const agentDir = join(dir, "agent");
+      const authPath = join(agentDir, "auth.json");
+      await mkdir(agentDir);
+      await writeFile(
+        authPath,
+        JSON.stringify({
+          "grok-build": {
+            type: "oauth",
+            access: "expired-access",
+            refresh: "refresh-value",
+            expires: 0,
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const preload = join(dir, "hanging-fetch.mjs");
+      await writeFile(
+        preload,
+        `globalThis.fetch = (_input, init = {}) => new Promise((_resolve, reject) => {
+  const activeRequest = setInterval(() => {}, 1000);
+  const abort = () => {
+    clearInterval(activeRequest);
+    reject(init.signal?.reason ?? new Error("aborted"));
+  };
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener("abort", abort, { once: true });
+});\n`,
+      );
+      const boundedParent = "Parent ${output}";
+      const boundedRequest = {
+        ...request,
+        parent_prompt: boundedParent,
+        parent_prompt_sha256: createHash("sha256").update(boundedParent).digest("hex"),
+        timeout_ms: 75,
+      };
+      const started = Date.now();
+      const bounded = spawn(process.execPath, [join(dir, "package", "xai-one-shot-bin.js")], {
+        env: {
+          ...process.env,
+          PI_CODING_AGENT_DIR: agentDir,
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${preload}`.trim(),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let boundedStdout = "";
+      let boundedStderr = "";
+      bounded.stdout.on("data", (chunk) => (boundedStdout += String(chunk)));
+      bounded.stderr.on("data", (chunk) => (boundedStderr += String(chunk)));
+      bounded.stdin.end(JSON.stringify(boundedRequest));
+      const forceKill = setTimeout(() => bounded.kill("SIGKILL"), 3_000);
+      const [boundedExit] = (await once(bounded, "close")) as [number];
+      clearTimeout(forceKill);
+
+      expect(boundedExit).toBe(EXIT_AUTH_FAILED);
+      expect(Date.now() - started).toBeLessThan(1_500);
+      expect(JSON.parse(boundedStdout)).toMatchObject({
+        ok: false,
+        error: { code: "oauth_unavailable" },
+      });
+      expect(boundedStderr).toBe("pi-xai-one-shot: oauth_unavailable\n");
+      expect(await readdir(agentDir)).toEqual(["auth.json"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -62,7 +62,7 @@ function cleanupHermeticPaths() {
   __resetTestPathsToDefaults();
 }
 
-describe("xai-oauth (9 essential tests — Hermes parity)", () => {
+describe("xai-oauth", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -125,6 +125,24 @@ describe("xai-oauth (9 essential tests — Hermes parity)", () => {
     await expect(refreshXaiToken(cred)).rejects.toThrow(
       /imported from the grok CLI and has no refresh token/,
     );
+  });
+
+  test("refreshXaiToken optionally scopes fetch without changing normal refresh", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ access_token: "new-access", refresh_token: "new-refresh" }),
+    });
+    const credentials = { access: "old-access", refresh: "old-refresh", expires: 0 };
+    const controller = new AbortController();
+
+    await expect(refreshXaiToken(credentials, controller.signal)).resolves.toMatchObject({
+      access: "new-access",
+      refresh: "new-refresh",
+    });
+    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal);
+
+    await expect(refreshXaiToken(credentials)).resolves.toMatchObject({ access: "new-access" });
+    expect(fetchMock.mock.calls[1][1]?.signal).toBeUndefined();
   });
 
   test("getEffectiveXaiApiKey prefers explicit grok-build entry", async () => {

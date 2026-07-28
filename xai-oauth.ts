@@ -427,7 +427,10 @@ export function isXaiAccessTokenExpiring(
 
 export let PI_AUTH_PATH = resolve(homedir(), ".pi/agent/auth.json");
 
-async function refreshXaiAccessToken(refreshToken: string): Promise<{
+async function refreshXaiAccessToken(
+  refreshToken: string,
+  signal?: AbortSignal,
+): Promise<{
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
@@ -442,6 +445,7 @@ async function refreshXaiAccessToken(refreshToken: string): Promise<{
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    signal,
   });
 
   if (!res.ok) {
@@ -932,7 +936,10 @@ export async function loginXai(callbacks: OAuthLoginCallbacks): Promise<OAuthCre
   return performNativeDeviceCodeLogin(callbacks);
 }
 
-export async function refreshXaiToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+export async function refreshXaiToken(
+  credentials: OAuthCredentials,
+  signal?: AbortSignal,
+): Promise<OAuthCredentials> {
   if (!credentials.refresh) {
     // Imported token from ~/.grok/auth.json (no refresh token was stored).
     // User should do a real /login grok-build for a managed, refreshable session.
@@ -942,7 +949,7 @@ export async function refreshXaiToken(credentials: OAuthCredentials): Promise<OA
   }
 
   try {
-    const token = await refreshXaiAccessToken(credentials.refresh);
+    const token = await refreshXaiAccessToken(credentials.refresh, signal);
 
     const access = token.access_token;
     const refresh = token.refresh_token ?? credentials.refresh;
@@ -962,15 +969,20 @@ export function getXaiApiKeyFromCredentials(cred: OAuthCredentials): string {
   return cred.access;
 }
 
-/** Shared provider descriptor for Pi AuthStorage and the extension registration. */
-export const grokBuildOAuthProvider = {
-  id: "grok-build",
-  name: "xAI (Grok Build)",
-  usesCallbackServer: true,
-  login: loginXai,
-  refreshToken: refreshXaiToken,
-  getApiKey: getXaiApiKeyFromCredentials,
-};
+/** Construct a provider whose refresh requests may be scoped to a caller-owned deadline. */
+export function createGrokBuildOAuthProvider(signal?: AbortSignal) {
+  return {
+    id: "grok-build",
+    name: "xAI (Grok Build)",
+    usesCallbackServer: true,
+    login: loginXai,
+    refreshToken: (credentials: OAuthCredentials) => refreshXaiToken(credentials, signal),
+    getApiKey: getXaiApiKeyFromCredentials,
+  };
+}
+
+/** Shared unbounded provider descriptor for normal Pi extension registration. */
+export const grokBuildOAuthProvider = createGrokBuildOAuthProvider();
 
 // =============================================================================
 // Combined key resolver used by the extension tools (grok-cli + Pi auth + env + settings)
