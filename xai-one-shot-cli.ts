@@ -84,6 +84,12 @@ export async function runOneShotCli(
   return output.includes('"code":"internal_error"') ? EXIT_INTERNAL_ERROR : result.exitCode;
 }
 
+function flush(stream: NodeJS.WriteStream): Promise<void> {
+  return new Promise((resolve, reject) => {
+    stream.write("", (error) => (error ? reject(error) : resolve()));
+  });
+}
+
 export async function main(): Promise<void> {
   const exitCode = await runOneShotCli(
     { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
@@ -94,5 +100,10 @@ export async function main(): Promise<void> {
     },
     process.argv.slice(2),
   );
-  process.exitCode = exitCode;
+
+  // A one-shot executable must not inherit the lifetime of aborted fetches,
+  // runtime keep-alives, or loader handles. The empty writes are completion
+  // barriers for the result frame and diagnostic already queued above.
+  await Promise.all([flush(process.stdout), flush(process.stderr)]);
+  process.exit(exitCode);
 }

@@ -161,7 +161,9 @@ Success frame (exit `0`):
 }
 ```
 
-`usage` is omitted unless the provider reports valid nonnegative integer token counts. Cost/spend is never estimated. Failure frames use `{"ok":false,"error":{"code":"...","message":"..."}}` with deterministic exits: invalid input `2`, OAuth `3`, request/rate-limit `4`, invalid model output `5`, internal output-bound failure `6`. stderr is either empty or one bounded sanitized code line; provider bodies, prompts, and credentials are never echoed.
+`usage` is omitted unless the provider reports valid nonnegative integer token counts. Cost/spend is never estimated. Failure frames use `{"ok":false,"error":{"code":"...","message":"..."}}` with deterministic exits: invalid input `2`, OAuth `3`, request/rate-limit `4`, invalid model output `5`, internal output-bound failure `6`. stderr is either empty or one bounded sanitized code line; provider bodies, prompts, and credentials are never echoed. After stdout and stderr are flushed, the executable exits with that code even if an aborted request or runtime/loader handle remains active.
+
+`timeout_ms` measures the OAuth-refresh-plus-generation operation. Its wall clock starts only after the complete bounded stdin value has reached EOF and has been decoded and validated; it does not include Node/tsx process startup or the producer's input-delivery time. A Go caller must bound process startup and stdin delivery separately with its `exec.CommandContext` deadline (normally also serving as the outer whole-process safety bound).
 
 The one-shot helper is an executable-only package contract. Its TypeScript test seams remain package-internal, so normal Node consumers are not given an unrunnable raw `.ts` subpath and cannot request token material from the OAuth resolver.
 

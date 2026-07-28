@@ -397,6 +397,43 @@ describe("bounded xAI one-shot helper", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("starts the request timeout only after bounded stdin has been decoded", async () => {
+    const fake = dependencies(message(envelope()));
+    fake.deps.auth = {
+      getAccessToken() {
+        return new Promise(() => {});
+      },
+    };
+    const stdout: string[] = [];
+    const inputDelayMs = 80;
+    const operationTimeoutMs = 20;
+    const started = Date.now();
+    const exitCode = await runOneShotCli(
+      {
+        stdin: (async function* () {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, inputDelayMs));
+          yield JSON.stringify({
+            ...request,
+            parent_prompt_sha256: createHash("sha256").update(request.parent_prompt).digest("hex"),
+            timeout_ms: operationTimeoutMs,
+          });
+        })(),
+        stdout: { write: (chunk) => stdout.push(chunk) },
+        stderr: { write: () => undefined },
+      },
+      fake.deps,
+    );
+    const elapsed = Date.now() - started;
+
+    expect(exitCode).toBe(EXIT_AUTH_FAILED);
+    expect(elapsed).toBeGreaterThanOrEqual(inputDelayMs + operationTimeoutMs - 10);
+    expect(elapsed).toBeLessThan(500);
+    expect(JSON.parse(stdout[0])).toMatchObject({
+      ok: false,
+      error: { code: "oauth_unavailable" },
+    });
+  });
+
   test("CLI rejects malformed UTF-8 rather than replacement-decoding it", async () => {
     const fake = dependencies(message(envelope()));
     const stdout: string[] = [];
@@ -528,12 +565,19 @@ describe("bounded xAI one-shot helper", () => {
         { mode: 0o600 },
       );
       const preload = join(dir, "hanging-fetch.mjs");
+      const lifecyclePath = join(dir, "helper-lifecycle.txt");
       await writeFile(
         preload,
-        `globalThis.fetch = (_input, init = {}) => new Promise((_resolve, reject) => {
-  const activeRequest = setInterval(() => {}, 1000);
+        `import { appendFileSync } from "node:fs";
+const lifecyclePath = process.env.ONE_SHOT_TEST_LIFECYCLE;
+const mark = (event) => appendFileSync(lifecyclePath, event + ":" + Date.now() + "\\n");
+mark("ready");
+const abandonedRuntimeHandle = setInterval(() => {}, 1000);
+void abandonedRuntimeHandle;
+globalThis.fetch = (_input, init = {}) => new Promise((_resolve, reject) => {
+  mark("fetch");
   const abort = () => {
-    clearInterval(activeRequest);
+    mark("abort");
     reject(init.signal?.reason ?? new Error("aborted"));
   };
   if (init.signal?.aborted) abort();
@@ -541,17 +585,18 @@ describe("bounded xAI one-shot helper", () => {
 });\n`,
       );
       const boundedParent = "Parent ${output}";
+      const operationTimeoutMs = 75;
       const boundedRequest = {
         ...request,
         parent_prompt: boundedParent,
         parent_prompt_sha256: createHash("sha256").update(boundedParent).digest("hex"),
-        timeout_ms: 75,
+        timeout_ms: operationTimeoutMs,
       };
-      const started = Date.now();
       const bounded = spawn(process.execPath, [join(dir, "package", "xai-one-shot-bin.js")], {
         env: {
           ...process.env,
           PI_CODING_AGENT_DIR: agentDir,
+          ONE_SHOT_TEST_LIFECYCLE: lifecyclePath,
           NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${preload}`.trim(),
         },
         stdio: ["pipe", "pipe", "pipe"],
@@ -560,17 +605,52 @@ describe("bounded xAI one-shot helper", () => {
       let boundedStderr = "";
       bounded.stdout.on("data", (chunk) => (boundedStdout += String(chunk)));
       bounded.stderr.on("data", (chunk) => (boundedStderr += String(chunk)));
+
+      const startupDeadline = Date.now() + 8_000;
+      while (!(await readFile(lifecyclePath, "utf8").catch(() => "")).includes("ready:")) {
+        if (Date.now() >= startupDeadline)
+          throw new Error("packaged helper missed startup allowance");
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+      }
+      const inputDelayMs = 150;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, inputDelayMs));
+      const inputSentAt = Date.now();
       bounded.stdin.end(JSON.stringify(boundedRequest));
-      const forceKill = setTimeout(() => bounded.kill("SIGKILL"), 3_000);
-      const [boundedExit] = (await once(bounded, "close")) as [number];
+
+      let watchdogFired = false;
+      const forceKill = setTimeout(() => {
+        watchdogFired = true;
+        bounded.kill("SIGKILL");
+      }, 3_000);
+      const [boundedExit, boundedSignal] = (await once(bounded, "close")) as [
+        number | null,
+        NodeJS.Signals | null,
+      ];
+      const closedAt = Date.now();
       clearTimeout(forceKill);
 
+      const lifecycle = (await readFile(lifecyclePath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const [event, timestamp] = line.split(":");
+          return { event, timestamp: Number(timestamp) };
+        });
+      const fetchAt = lifecycle.find(({ event }) => event === "fetch")?.timestamp;
+      const abortAt = lifecycle.find(({ event }) => event === "abort")?.timestamp;
+
+      expect(watchdogFired).toBe(false);
       expect(boundedExit).toBe(EXIT_AUTH_FAILED);
-      expect(Date.now() - started).toBeLessThan(1_500);
+      expect(boundedSignal).toBeNull();
+      expect(fetchAt).toBeGreaterThanOrEqual(inputSentAt);
+      expect(abortAt! - fetchAt!).toBeGreaterThanOrEqual(operationTimeoutMs - 20);
+      expect(abortAt! - fetchAt!).toBeLessThan(500);
+      expect(closedAt - fetchAt!).toBeLessThan(1_000);
       expect(JSON.parse(boundedStdout)).toMatchObject({
         ok: false,
         error: { code: "oauth_unavailable" },
       });
+      expect(boundedStdout.split("\n").filter(Boolean)).toHaveLength(1);
       expect(boundedStderr).toBe("pi-xai-one-shot: oauth_unavailable\n");
       expect(await readdir(agentDir)).toEqual(["auth.json"]);
     } finally {
