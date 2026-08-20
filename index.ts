@@ -386,6 +386,32 @@ export function mergeXaiTools(existing: unknown[], builtins: unknown[]): unknown
   });
 }
 
+/** Providers whose payloads actually use the xAI Responses wire shape. */
+const XAI_REWRITE_PROVIDERS = new Set(["grok-build", "xai"]);
+
+/**
+ * Whether the `before_provider_request` rewrites below apply to this request.
+ *
+ * `grok-` is a model-id prefix, not a provider. Other providers ship their own
+ * `grok-*` ids — Cursor registers `grok-4.5` / `grok-4.6` under provider `cursor`
+ * (api `cursor-native`) — and they do not speak the xAI Responses wire format.
+ * Appending `{ type: "web_search" }` to a cursor-native payload hands the consumer
+ * a tool entry with no `.function`, and `@rahularya01/pi-cursor` throws
+ * `Cannot read properties of undefined (reading 'parameters')` before the request
+ * is ever sent.
+ *
+ * When the active provider is unknown, keep the historical prefix-only behaviour
+ * rather than silently disabling agentic mode.
+ */
+export function shouldApplyXaiPayloadRewrites(
+  model: string | undefined,
+  provider: string | undefined,
+): boolean {
+  if (!model?.startsWith("grok-")) return false;
+  if (provider === undefined) return true;
+  return XAI_REWRITE_PROVIDERS.has(provider);
+}
+
 /**
  * Request reasoning.encrypted_content on reasoning models for multi-turn replay.
  * Official Grok Build always includes this (store:false + client-side replay).
@@ -498,7 +524,7 @@ export default async function (api: ExtensionAPI) {
     if (!payload) return;
 
     const model = payload.model as string | undefined;
-    if (!model?.startsWith("grok-")) return;
+    if (!shouldApplyXaiPayloadRewrites(model, ctx.model?.provider)) return;
 
     const config = resolveXaiConfig();
     const agentic = getAgenticConfig(config);

@@ -18,7 +18,11 @@ import {
   xaiRequestHeaders,
 } from "../xai-stream.ts";
 import { registerGrokCliConvHeaders, GROK_BUILD_MODELS } from "../xai-provider.ts";
-import { ensureXaiEncryptedReasoningInclude, mergeXaiTools } from "../index.ts";
+import {
+  ensureXaiEncryptedReasoningInclude,
+  mergeXaiTools,
+  shouldApplyXaiPayloadRewrites,
+} from "../index.ts";
 import { XAI_IMAGINE_MODEL } from "../xai-image-gen.ts";
 
 describe("defaults (official Grok Build shape)", () => {
@@ -126,6 +130,27 @@ describe("Responses payload helpers", () => {
         [{ type: "web_search" }, { type: "x_search" }],
       ),
     ).toEqual([{ type: "function", name: "bash" }, { type: "web_search" }, { type: "x_search" }]);
+  });
+
+  test("payload rewrites are scoped to xAI providers, not the grok- id prefix", () => {
+    // Our own provider and a plain XAI_API_KEY setup both take the rewrites.
+    expect(shouldApplyXaiPayloadRewrites("grok-4.6", "grok-build")).toBe(true);
+    expect(shouldApplyXaiPayloadRewrites("grok-4.6", "xai")).toBe(true);
+
+    // Cursor ships its own grok-4.5 / grok-4.6 over the cursor-native wire format.
+    // Injecting Responses builtins there produces a tool entry with no `.function`
+    // and @rahularya01/pi-cursor throws on `.parameters` before the request is sent.
+    expect(shouldApplyXaiPayloadRewrites("grok-4.6", "cursor")).toBe(false);
+    expect(shouldApplyXaiPayloadRewrites("grok-4.5", "cursor")).toBe(false);
+    expect(shouldApplyXaiPayloadRewrites("grok-4.6", "openrouter")).toBe(false);
+
+    // Unknown provider keeps the historical prefix-only behaviour.
+    expect(shouldApplyXaiPayloadRewrites("grok-4.6", undefined)).toBe(true);
+
+    // Non-grok ids are never touched, whatever the provider.
+    expect(shouldApplyXaiPayloadRewrites("composer-2.5", "cursor")).toBe(false);
+    expect(shouldApplyXaiPayloadRewrites("glm-5.2", "grok-build")).toBe(false);
+    expect(shouldApplyXaiPayloadRewrites(undefined, "grok-build")).toBe(false);
   });
 });
 
