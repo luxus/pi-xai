@@ -1,4 +1,6 @@
+import { streamSimple as openaiResponsesStreamSimple } from "@earendil-works/pi-ai/api/openai-responses";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { wrapGrokBuildCantHelpRetry, type StreamSimpleFn } from "./xai-cant-help.ts";
 import { resolveXaiConfig } from "./xai-config.ts";
 import { loginXai, refreshXaiToken, getXaiApiKeyFromCredentials } from "./xai-oauth.ts";
 import { grokCliModelHeaders, isGrokCliProxyBaseUrl } from "./xai-stream.ts";
@@ -145,6 +147,9 @@ export function registerXaiProvider(api: ExtensionAPI) {
     baseUrl,
     api: "openai-responses",
     authHeader: true,
+    // Direct import, not getApiProvider: this streamSimple replaces the
+    // openai-responses registry entry, so a registry lookup would recurse.
+    streamSimple: wrapGrokBuildCantHelpRetry(openaiResponsesStreamSimple as StreamSimpleFn),
     oauth: {
       name: "xAI (Grok Build)",
       usesCallbackServer: true,
@@ -170,8 +175,8 @@ export function registerXaiProvider(api: ExtensionAPI) {
 
 /**
  * Scope conversation affinity headers to Grok Build CLI-proxy requests only.
- * Prefer this over a custom streamSimple (which pi-ai can clobber when re-registering
- * the default openai-responses streamer). Mirrors kenryu42/pi-grok-cli.
+ * Keep headers here rather than inside the cant-help streamSimple wrap (Pi keys
+ * that wrap by API id `openai-responses`). Mirrors kenryu42/pi-grok-cli.
  */
 export function registerGrokCliConvHeaders(api: ExtensionAPI) {
   api.on("before_provider_headers", (event, ctx) => {

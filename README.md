@@ -104,6 +104,7 @@ Example `~/.pi/agent/settings.json` packages list:
 - Official tool names: **`image_gen`**, **`image_edit`**, **`image_to_video`**, **`web_fetch`**, plan/goal tools
 - **No** Cursor capital shims (`Grep`/`Glob`/`WebSearch`) — Pi natives + server `web_search`
 - CLI import keeps **`refresh_token`** from `~/.grok/auth.json`
+- CLI proxy 403 **`I can't help with that request.`** is retried up to twice (~400ms) when the attempt has not streamed yet
 
 Public API override:
 

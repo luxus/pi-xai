@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI proxy cant-help 403** — retry `I can't help with that request.` up to 2 times (~400ms) on grok-build when the attempt produced no streamed text or tool calls. Stale-token and entitlement 403s are not retried.
+
 ## [0.18.0] - 2026-08-13
 
 ### Added
