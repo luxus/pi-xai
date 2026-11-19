@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Declare `typebox` as a host peer** — move it from `dependencies` to `peerDependencies` with `"*"` (keep `^1.3.6` in `devDependencies` for local tests). Pi supplies `typebox` to extensions; a bundled copy trips the host-package warning and can duplicate runtime modules.
+
 ## [0.18.0] - 2026-08-13
 
 ### Added
